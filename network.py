@@ -9,6 +9,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+from sklearn import svm
+import numpy as np
+
 from bs4 import BeautifulSoup
 import os
 import time
@@ -101,8 +104,9 @@ class WordEmbedding():
             # Create Wordlist and vectorize it
             # Previously be sure to filter out the unknown
             text = text.replace('.', ' ')
-            words = filter(lambda x: x in self.model.wv.vocab, text.split())
-            return T.Tensor([[self.model.wv.word_vec(w) for w in words]]).to(conf.device)
+            words = list(filter(lambda x: x in self.model.wv.vocab, text.split()))
+            if len(words) >= 5:
+                return T.Tensor([[self.model.wv.word_vec(w) for w in words]]).to(conf.device)
 
         return None
 
@@ -134,6 +138,35 @@ class TextCNN(nn.Module):
         x = F.softmax(x, dim = 1)
 
         return x
+
+
+class ProfileSVM():
+    def __init__(self):
+        self.model = svm.SVC(kernel='rbf', probability=True)
+        self.data = [([0 for i in conf.CATEGORIES], 0)] # (x, y)
+        
+        #self.add_profile_data([5 for i in conf.CATEGORIES])
+        
+
+    def add_profile_data(self, x):
+        # Add data
+        self.data.append((x, 1))
+        
+        x_list, y_list = [], []
+        for x, y in self.data:
+            # Prepare lists
+            x_list.append(x)
+            y_list.append(y)
+
+        # Train
+        self.model.fit(x_list, y_list)
+
+    def predict_value(self, x_test):
+        # Predict value
+        return float(self.model.predict_proba([x_test])[0][1])
+
+
+# Methods
 
 def load_model():
     model = TextCNN()

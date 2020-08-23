@@ -1,15 +1,19 @@
 import config as conf
 import network
 
+from beem import Hive
+from beem.account import Account
+from beem.comment import Comment
+from beem.exceptions import ContentDoesNotExistsException
+from beem.vote import AccountVotes
+import  numpy as np
 import torch as T
 import json
 import urllib.request
 import os
 import re
 
-def get_website_code(url : str):
-    
-
+def get_website_code(url : str):    
     try:
         headers = {'User-Agent':conf.USER_AGENT,} 
         request = urllib.request.Request(url, None, headers) 
@@ -22,7 +26,7 @@ def get_website_code(url : str):
         print(e)
         return ''
 
-
+# ---   HIVE   ---
 def get_hive_post_json(url : str):
     # Header is needed. Else they 
     # return a 403 Code (Forbidden)
@@ -44,6 +48,29 @@ def get_hive_post_json(url : str):
         print("Can't get " + url)
         print(e)
         return json.loads('{"body":""}')
+
+def get_all_hive_posts(author : str):
+    account = Account(author)
+    c_list = {}
+    posts = [] # (permlink, author)
+    
+    for post in account.blog_history():
+        if post["parent_author"] is '':
+            # only posts, no comments
+            posts.append((post["permlink"], post["author"]))
+
+    return posts
+
+def get_all_hive_votes(author : str):
+    votes = AccountVotes(author)
+    posts = [] # (permlink, author)
+    for vote in votes:
+        posts.append((vote["permlink"], vote["author"]))
+    return posts
+
+def get_hive_post(permlink : str, author : str):    
+    c = Comment(f'@{author}/{permlink}', blockchain_instance=Hive(conf.HIVE_NODES[np.random.randint(0, len(conf.HIVE_NODES))]))
+    return c
 
 def load_train_dataset_file():
     if os.path.exists(conf.TRAINING_DATASET_PATH) == False:
@@ -90,3 +117,6 @@ def pre_process_text(text : str):
     
 
     return text.lower()
+
+
+
