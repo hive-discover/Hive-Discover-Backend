@@ -43,6 +43,7 @@ class WordEmbedding():
     def train_model_dataset(self):
         sentences = []
         with open('data/articles.csv', 'r', encoding = 'cp850') as csv_file:
+            # Loading articles
             reader = csv.reader(csv_file, delimiter=',')
             line_count = 0
             for row in reader:
@@ -56,6 +57,17 @@ class WordEmbedding():
                     text = helper.pre_process_text(text)
                     for sentence in text.split('.'):
                         sentences.append(sentence.split(' '))
+
+        with open("data/train.tsv", encoding = 'cp850') as tsv_file:
+            # loading Google train data
+            read_tsv = csv.reader(tsv_file, delimiter="\t")
+            line_counter = 0
+            for row in read_tsv:
+                if line_counter == 0:
+                    line_counter += 1
+                else:
+                    #sentences.append(helper.pre_process_text(row[0]).split(' '))
+                    line_counter += 1
         self.train_model(sentences=sentences)
             
 
@@ -138,32 +150,6 @@ class TextCNN(nn.Module):
         x = F.softmax(x, dim = 1)
 
         return x
-
-
-class ProfileSVM():
-    def __init__(self):
-        self.model = svm.SVC(kernel='rbf', probability=True)
-        self.data = [([0 for i in conf.CATEGORIES], 0)] # (x, y)
-        
-        #self.add_profile_data([5 for i in conf.CATEGORIES])
-        
-
-    def add_profile_data(self, x):
-        # Add data
-        self.data.append((x, 1))
-        
-        x_list, y_list = [], []
-        for x, y in self.data:
-            # Prepare lists
-            x_list.append(x)
-            y_list.append(y)
-
-        # Train
-        self.model.fit(x_list, y_list)
-
-    def predict_value(self, x_test):
-        # Predict value
-        return float(self.model.predict_proba([x_test])[0][1])
 
 
 # Methods

@@ -69,8 +69,13 @@ def get_all_hive_votes(author : str):
     return posts
 
 def get_hive_post(permlink : str, author : str):    
-    c = Comment(f'@{author}/{permlink}', blockchain_instance=Hive(conf.HIVE_NODES[np.random.randint(0, len(conf.HIVE_NODES))]))
-    return c
+    try:
+        c = Comment(f'@{author}/{permlink}', blockchain_instance=Hive(conf.HIVE_NODES[np.random.randint(0, len(conf.HIVE_NODES))]))
+        return c
+    except:
+        return None
+
+# ---   Dataset   ---
 
 def load_train_dataset_file():
     if os.path.exists(conf.TRAINING_DATASET_PATH) == False:
@@ -93,6 +98,8 @@ def load_test_dataset_file():
 
     print(f"[INFO] Loaded test dataset with {len(dataset)} items.")
     return dataset
+
+
 
 def pre_process_text(text : str):
     # remove all Links

@@ -6,7 +6,7 @@ import server
 
 import argparse
 import time
-import re
+import re, csv
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-train', '--train', help='Train the text - and word2vec network. Epochs must be given')
@@ -20,10 +20,6 @@ def main():
     # Load both networks
     embedding = network.WordEmbedding()
     model = network.load_model()
-
-    
-    args.production = True
-
 
     if args.train:       
         model = Trainer(model, embedding).train(int(args.train), retrain_word2vec=True)
@@ -55,11 +51,9 @@ def main():
             except KeyboardInterrupt:
                 break
 
-        print('Got 3 interesting posts:')
+        print(f'Got {len(advisor.interesting_posts)} interesting posts:')
         for post in advisor.interesting_posts:
-            print(post)
-    #advisor = DiscoverAdvisor('christopher2002', model, embedding)
-    
+            print(post)    
     
 
 if __name__ == "__main__":
