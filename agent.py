@@ -18,7 +18,6 @@ import os
 from threading import Thread
 from datetime import datetime, timezone
 
-# Text Embedding & Word2Vec
 
 class Trainer():
     def __init__(self, model, embedding):
@@ -39,7 +38,7 @@ class Trainer():
         average_losses = []
 
         print("Start text training...")
-        for e in range(epochs):
+        for e in range(epochs + 1):
             self.dataset = sorted(self.dataset, key=lambda k: random.random())
             epoch_losses = 0
             try:
@@ -58,6 +57,8 @@ class Trainer():
                     if e == 0 and retrain_word2vec == True:
                         if 'new_words' not in item:
                             self.embedding.train_model(html=post['body'], text=post['title'] + ". ")
+                            # Only learn new words
+                        continue
 
                     self.optimizer.zero_grad()
 
@@ -92,6 +93,7 @@ class Trainer():
         plt.savefig('data/Training_Loss.png')
         plt.show()
         return self.model
+
 
 class Tester():
     def __init__(self, model, embedding):
@@ -131,8 +133,6 @@ class Tester():
             print('OUTPUT:')
             print(_output)
 
-                    
-# 
 
 class DiscoverAdvisor():
     def __init__(self, username : str, model = None, embedding = None):
@@ -151,7 +151,9 @@ class DiscoverAdvisor():
         else:
             self.embedding = embedding
         #self.profiler = network.ProfileSVM()
-        self.data = []
+        #self.data = []
+        self.profile_data = []
+        self.profile_data_length = 0
 
         # Start Threads
         self.check_voting_thread = Thread(target=self.check_votings)
@@ -178,9 +180,7 @@ class DiscoverAdvisor():
                 break
             
             vector = self.analyze_post(permlink, author)
-            if vector is not -1:
-                if self.running:
-                    self.data.append(vector.data[0].tolist())
+            self.add_profile_data(vector)
                 
 
     def check_posts(self):
@@ -192,8 +192,20 @@ class DiscoverAdvisor():
                 break
 
             vector = self.analyze_post(permlink, author)
-            if vector is not -1:
-                self.data.append(vector.data[0].tolist())
+            self.add_profile_data(vector, factor=2)
+
+    def add_profile_data(self, vector, factor=1):
+        if vector is -1:
+            return
+
+        l = vector.data[0].tolist()
+        if len(self.profile_data) == 0:
+            self.profile_data = l
+        else:
+            # Calculate average
+            self.profile_data = [((self.profile_data[i] + l[i] * factor) / (1 + factor)) for i in range(len(self.profile_data))]
+
+        self.profile_data_length += 1
 
     def analyze_post(self, permlink : str, author = ''):
         if author == '':
@@ -201,7 +213,7 @@ class DiscoverAdvisor():
 
         # Get post and vectorize it
         post = get_hive_post(permlink, author)
-        if post['parent_author'] is not '':
+        if post is None or post['parent_author'] is not '':
             return -1
         _input = self.embedding.text_vectorization(html=post['body'], text=post['title'] + ". ", train_unknown=False)
         
@@ -215,8 +227,10 @@ class DiscoverAdvisor():
         return _output.cpu()
                 
     def choose_interesting_posts(self):
-        while len(self.data) < conf.PROFILER_MINUMUM_DATA_LENGTH or len(conf.LATEST_POSTS) < 5:
+        #while len(self.data) < conf.PROFILER_MINUMUM_DATA_LENGTH or len(conf.LATEST_POSTS) < 5:
+        while self.profile_data_length < conf.PROFILER_MINUMUM_DATA_LENGTH or len(conf.LATEST_POSTS) < 5:
             time.sleep(0.2)              
+
 
         while self.running:
             # Get random post
@@ -228,19 +242,16 @@ class DiscoverAdvisor():
                 # Over given factor --> append to list
                 _, _, category, _ = post
 
-                for x in self.data:
-                    diff = np.array(x) - np.array(category)
-                    value = 0
-                    for a in diff:
-                        if a < 0:
-                            a = a * -1
-                        value += a
+                diff = np.array(self.profile_data) - np.array(category)
+                value = 0
+                for a in diff:
+                    if a < 0:
+                        a = a * -1
+                    value += a
 
-                    if value <= conf.PROFILER_INTERESTING_FACTOR:
-                        self.interesting_posts.append(post)
-                        break
-                    
-        
+                if value <= conf.PROFILER_INTERESTING_FACTOR:
+                    self.interesting_posts.append(post)
+                         
                 
 class LatestPostsManager():
     def __init__(self, model = None, embedding = None):
@@ -295,8 +306,11 @@ class LatestPostsManager():
         while True:     
             if current_num < self.chain.get_current_block_num():              
                 # if block is available
-                for block in self.chain.blocks(start=current_num, stop=current_num):
-                    conf.LATEST_POSTS += self.get_posts_from_block(block)
+                try:
+                    for block in self.chain.blocks(start=current_num, stop=current_num):
+                        conf.LATEST_POSTS += self.get_posts_from_block(block)
+                except:
+                    pass
                         
                 current_num += 1
             else:
