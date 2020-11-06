@@ -1,49 +1,33 @@
-import config as conf
+from threading import Thread
 
 from beem import Hive
 from beem.blockchain import Blockchain
-from beem.discussions import Query, Discussions_by_trending, Discussions_by_created
 
-from bs4 import BeautifulSoup
-import urllib.request
+import network
 
-from datetime import datetime, timezone
-from threading import Thread
+import random
+import time
+from datetime import datetime, timedelta
+from inspect import getsourcefile
+import os.path as path, sys
+current_dir = path.dirname(path.abspath(getsourcefile(lambda:0)))
+sys.path.insert(0, current_dir[:current_dir.rfind(path.sep)])
 
-import json, time
-
-
-def get_post_json(url : str):
-    # Header is needed. Else they 
-    # return a 403 Code (Forbidden)
-    headers = {'User-Agent':conf.USER_AGENT,} 
-
-    try:
-        request = urllib.request.Request(url, None, headers) 
-        response = urllib.request.urlopen(request)
-        data = response.read() 
-    except Exception as e:
-        return json.loads('{"body":""}')
-
-    # return only the post element
-    try:
-        return json.loads(data.decode())['post']
-    except Exception as e:
-        print("Can't get " + url)
-        print(e)
-        return json.loads('{"body":""}')
-
-def get_trending_posts_by_tags(tag, limit=10):
-    query = Query(limit=limit, tag=tag)
-    return Discussions_by_trending(query)
-
-def get_new_posts_by_tags(tag, limit=10):
-    query = Query(limit=limit, tag=tag)
-    return Discussions_by_created(query)
+# Modules from parent Directory
+import config  
+import database
+sys.path.pop(0)
 
 
 class LatestPostManager():
     def __init__(self):
+        self.mysql_con = config.get_connection()
+        if self.mysql_con is None:
+            print("[INFO] Can't start Latest Post Manager because of an mysql database error!")
+            return
+        self.mysql_cursor = self.mysql_con.cursor()
+        self.query = "INSERT INTO latest_posts (author, permlink, category, timestamp) VALUES (%s, %s, %s, %s);"
+
         self.chain = Blockchain(blockchain_instance=Hive()) #node=conf.HIVE_NODES[5]
 
         self.run_thread = Thread(target=self.run)
@@ -51,48 +35,56 @@ class LatestPostManager():
         self.run_thread.daemon = True
         self.run_thread.start()
 
-    def get_posts_by_block(self, block):
-        posts = []
+    def enter_posts_by_block(self, block):
         for op in block.operations:
             if op['type'] == 'comment_operation':
                 action = op['value']
                 if action['parent_author'] == '':
                     # found post --> Categorize
-                    _input = conf.statics.WordEmbedding.vectorize_text(html=action['body'], text=action['title'] + ". ")
+                    _input = network.WordEmbedding.vectorize_text(config.statics.Word2Vec, html=action['body'], text=action['title'] + ". ")
                     if _input is None:
                         # to short or error
                         continue
+                    
+                    # Categorize
+                    _output = config.statics.TextCNN(_input).cpu()
 
-                    _output = conf.statics.TextCNN(_input).cpu()
-                    posts.append((action['permlink'], action['author'], _output.data[0].tolist(), block["timestamp"]))
-        return posts
+                    # Enter in Mysql
+                    str_arr = ' '.join(map(str,  _output.data[0].tolist()))
+                    result = database.commit_query(self.query, (action['author'], action['permlink'], str_arr, block["timestamp"].strftime("%d.%m.%YT%H:%M:%S")))
+                    if result == -1:
+                        print("[WARNING] Can't enter post in database!")
+                        time.sleep(5)
 
-    def cleanup_post_list(self):
-        # remove old ones
-        # only the first ones because they were sorted
-        # old posts are first
-        if len(conf.statics.LatestPosts) <= 5:
-            return
-
-        for permlink, author, category, timestamp in conf.statics.LatestPosts[:5]:
-            delta = datetime.now(timezone.utc) - timestamp
-            if delta.days > 5:
-                conf.statics.LatestPosts.remove((permlink, author, category, timestamp))
+    def clean_up(self):
+        # TODO: Implement sorting order by timestamp
+        query = "SELECT timestamp FROM latest_posts;"
+        for item in database.read_query(query, None):
+            timestamp = datetime.strptime(item[0], "%d.%m.%YT%H:%M:%S")
+            
+            if timestamp < (datetime.utcnow() - timedelta(days=5)):
+                result = database.commit_query("DELETE FROM latest_posts WHERE timestamp = %s;", (item[0], ))
+                if result <= 0:
+                    print("[WARNING] Can't delete old posts. Result: " + str(result))
 
     def run(self):
-        current_num = self.chain.get_current_block_num() - int(60*60*24*5/3) # Get all posts from the last 5 days
+        current_num = self.chain.get_current_block_num() - int(60*60*24*3/3) # Get all posts from the last 3 days because it takes a long time to get all and when it finished, the clean_up begins
         while True:     
             if current_num < self.chain.get_current_block_num():              
                 # if block is available
                 try:
                     for block in self.chain.blocks(start=current_num, stop=current_num):
-                        conf.statics.LatestPosts += self.get_posts_by_block(block)
+                        self.enter_posts_by_block(block)
                 except:
                     pass
                 
-                time.sleep(0.2)
+                time.sleep(0.5)
                 current_num += 1
+
+                
             else:
                 # wait until new block is created
                 # Using time for cleanup
-                self.cleanup_post_list()
+                self.clean_up()          
+                
+                         
