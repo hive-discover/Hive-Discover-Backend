@@ -1,0 +1,13 @@
+-f https://download.pytorch.org/whl/torch_stable.html
+django
+django-sslserver
+mysql-connector-python
+numpy==1.18.1
+scipy==1.4.1
+torch==1.6+cpu
+torchvision==0.7+cpu
+beautifulsoup4==4.8.2
+gensim==3.8.3
+beem==0.24.13
+scikit-learn
+tqdm
