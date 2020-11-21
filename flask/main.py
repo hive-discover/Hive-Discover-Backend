@@ -1,3 +1,4 @@
+from flask_cors.core import RegexObject
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -23,9 +24,9 @@ def index():
 
 @app.route('/ping', methods=['GET', 'POST'])
 def ping():
-    ''' AJAX Call for ping: Test the connection and maybe start a profiler '''
-    username = request.args.get('username', None, type=str)
-    if username:
+    ''' AJAX Call for ping: Test the connection and maybe start a profiler '''  
+    if "username" in request.json:
+        username = request.json["username"]
         database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
                          ("profiler", datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S"), username, ""))
      
@@ -34,10 +35,10 @@ def ping():
 @app.route('/get_interesting_posts', methods=['GET', 'POST'])
 def get_interesting_posts():
     ''' Ajax Call: get 3 interesting posts '''
-    username = request.args.get('username', None, type=str)
-    if username is None:
+    if "username" not in request.json:
         # Return error json, if no username is given
         return jsonify({"status" : "failed", "code" : 1, "message" : "No username is given"})
+    username = request.json["username"]
 
     # Get 3 posts
     LIMIT = 3
@@ -57,19 +58,16 @@ def get_interesting_posts():
     database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
                          ("profiler", datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S"), username, ""), con=con, close_con=False)
 
-    if len(posts) == 0:
-        return jsonify({"status" : "failed", "code" : 1, "msg" : "No posts currently available"})
-
     return jsonify({"status" : "succes", "posts" : posts})
 
 @app.route('/get_user_profile', methods=['GET', 'POST'])
 def get_user_profile():
-    ''' AJAX CALL: Get user data'''
-    username = request.args.get('username', None, type=str)
-    if username is None:
+    ''' AJAX CALL: Get user data'''    
+    if "username" not in request.json:
         # Error (No username)
         return jsonify({ "status" : "failed", "code" : 1,  "msg" : "No username is given"})
 
+    username = request.json["username"]
     result = database.read_query("SELECT * FROM profiler WHERE username=%s;", (username, ))
     if len(result) == 0:
         # Error (No post or Connection Error) --> return Error.js
@@ -100,12 +98,12 @@ def get_user_profile():
 
 @app.route('/adjust', methods=['GET', 'POST'])
 def adjust():
-    ''' AJAX CALL: Adjust user'''
-    username = request.args.get('username', None, type=str)
-    cats = request.args.get('cats', None, type=str)
-    if username is None or cats is None:
+    ''' AJAX CALL: Adjust user'''  
+    if "username" not in request.json or "cats" not in request.json:
         # Error (No username, cats is given) --> return Error.js
         return jsonify({"status" : "failed", "code" : 7, "msg" : "No username/categories are given"})
+    username = request.json["username"]
+    cats = request.json["cats"]
 
     # Enter in tasks
     database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
@@ -115,12 +113,12 @@ def adjust():
 
 @app.route('/set_to_zero', methods=['GET', 'POST'])
 def set_to_zero():
-    ''' AJAX CALL: Set category for user to zero'''
-    username = request.args.get('username', None, type=str)
-    cat = request.args.get('cat', None, type=str)
-    if username is None or cat is None:
-        # Error (No username, cats is given) --> return Error.js
+    ''' AJAX CALL: Set category for user to zero'''  
+    if "username" not in request.json or "cat" not in request.json:
+        # Error (No username, cats is given) --> return Error.js 
         return jsonify({"status" : "failed", "code" : 7, "msg" : "No username/category is given."})
+    username = request.json["username"]
+    cat = request.json["cat"]
 
     # Enter in tasks
     database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
@@ -130,11 +128,11 @@ def set_to_zero():
 
 @app.route('/delete_user', methods=['GET', 'POST'])
 def delete_user():
-    ''' AJAX CALL: delete user'''
-    username = request.args.get('username', None, type=str)
-    if username is None:
+    ''' AJAX CALL: delete user'''   
+    if "username" not in request.json:
         # Error (No username is given)
         return jsonify({"status" : "failed", "code" : 3, "msg" : "No username is given."})
+    username = request.json["username"]
 
     # Enter in tasks
     database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
