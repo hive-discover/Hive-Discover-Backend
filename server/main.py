@@ -19,14 +19,14 @@ def task_manager():
     con = config.get_connection()
     while 1:
         # Update analytics
-        database.commit_query("UPDATE analytics SET value_one=%s WHERE name=%s;",
-                             (len(config.statics.task_list), "tasks"), con=con, close_con=False)
+        database.commit_query("UPDATE analytics SET value_one=%s WHERE name=%s", 
+                                (len(config.statics.task_list), "tasks_running"), con=con, close_con=False)
 
         while len(config.statics.task_list) >= config.MAX_TASK_THREADS:
             # Thread limit is reached --> Wait for completing
             time.sleep(0.5)
 
-        # Get all available tasks
+        # Get first available task
         tasks = database.read_query("SELECT * FROM tasks LIMIT 1;", (), con=con, close_con=False)
 
         if len(tasks) == 0:
@@ -61,6 +61,21 @@ def task_manager():
                 p = Profiler(p_one, start_get_post_thread=False)
                 p.find_interestings()
 
+            if 'adjust' in name:
+                p = Profiler(p_one, start_get_post_thread=False)
+                p.adjust(categories_as_strings=p_two.split(','))
+            
+            if 'set_to_zero' in name:
+                p = Profiler(p_one, start_get_post_thread=False)
+                p.set_zero(category=p_two)  
+
+            if 'delete_user' in name:
+                database.commit_query("DELETE FROM profiler WHERE username=%s;",
+                                 (p_one, ))  
+                database.commit_query("DELETE FROM interesting_posts WHERE username=%s;",
+                                 (p_one, ))           
+                
+
             # delete task
             config.statics.task_list.remove(task)
 
@@ -71,12 +86,35 @@ def task_manager():
         t.start()
         
 
+def reset_analytics():
+    con = config.get_connection()
+
+    # Delete all
+    database.commit_query("SET SQL_SAFE_UPDATES = 0;", (), con=con, close_con=False)
+    database.commit_query("DELETE FROM analytics", (), con=con, close_con=False)
+
+    # tasks_running (currently)
+    database.commit_query("INSERT INTO analytics(name, value_one, value_two, value_three) VALUES (%s, %s, %s, %s)",
+                             ("tasks_running", 0, None, None), con=con, close_con=False)
+    
+    # connections (per second)
+    database.commit_query("INSERT INTO analytics(name, value_one, value_two, value_three) VALUES (%s, %s, %s, %s)",
+                             ("connections", 0, None, None), con=con, close_con=False)
+
+    # requests (per second)
+    database.commit_query("INSERT INTO analytics(name, value_one, value_two, value_three) VALUES (%s, %s, %s, %s)",
+                             ("requests", 0, None, None), con=con, close_con=False)
+
+    con.close()
+    print("[INFO] Analysing is running")
+
 #   --- STARTER --- 
 
 def main():
     # Init
     config.init_server()
     hive.LatestPostManager()
+    reset_analytics()
 
 
     # Start counter thread
@@ -95,21 +133,28 @@ def main():
     remove_old_profiler_thread = Thread(target=Profiler.remove_old_profiler) 
     remove_old_profiler_thread.name = "Remove old Profiler"
     remove_old_profiler_thread.daemon = True
-    remove_old_profiler_thread.start()
+    #remove_old_profiler_thread.start()
          
     # Wait until something happens
     while True:
         try:
             _input = input()
 
-            if 'exit' in _input or 'break' in _input or 'quit' in _input or 'stop' in _input:
+            if 'exit' in _input or 'break' in _input or 'quit' in _input:
                 # Stop
                 break
             if 'tasks' in _input:
                 # Get all tasks
                 print(f"Tasks({len(config.statics.task_list)}) are running: ")
                 for name, timestamp, _, _ in config.statics.task_list:
-                    print(f"{name} from {timestamp.strftime('%d.%m.%YT%H:%M:%S')}")
+                    print(f"{name} from {timestamp}")
+            if 'profiler' in _input:
+                # Profile one --> Add task
+                username = _input.split(' ')[1] #profiler christopher2002
+                database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
+                         ("profiler", datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S"), username, ""))
+                print("Created profiling task for " + username)
+
 
         except KeyboardInterrupt:
             break
