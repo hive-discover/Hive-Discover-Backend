@@ -3,6 +3,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from datetime import datetime
+from threading import Thread
 
 from inspect import getsourcefile
 import os.path as path, sys
@@ -13,6 +14,7 @@ sys.path.insert(0, current_dir[:current_dir.rfind(path.sep)])
 import config  
 import database
 sys.path.pop(0)
+import analytics
 
 app = Flask(__name__)
 CORS(app)
@@ -20,11 +22,13 @@ CORS(app)
 @app.route('/')
 def index():
     ''' Index site --> Show if everything is good '''
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     return 'Service is running'
 
 @app.route('/ping', methods=['GET', 'POST'])
 def ping():
     ''' AJAX Call for ping: Test the connection and maybe start a profiler '''  
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     if "username" in request.json:
         username = request.json["username"]
         database.commit_query("INSERT INTO tasks(name, timestamp, parameter_one, parameter_two) VALUES (%s, %s, %s, %s);",
@@ -35,6 +39,7 @@ def ping():
 @app.route('/get_interesting_posts', methods=['GET', 'POST'])
 def get_interesting_posts():
     ''' Ajax Call: get 3 interesting posts '''
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     if "username" not in request.json:
         # Return error json, if no username is given
         return jsonify({"status" : "failed", "code" : 1, "message" : "No username is given"})
@@ -63,6 +68,7 @@ def get_interesting_posts():
 @app.route('/get_user_profile', methods=['GET', 'POST'])
 def get_user_profile():
     ''' AJAX CALL: Get user data'''    
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     if "username" not in request.json:
         # Error (No username)
         return jsonify({ "status" : "failed", "code" : 1,  "msg" : "No username is given"})
@@ -99,6 +105,7 @@ def get_user_profile():
 @app.route('/adjust', methods=['GET', 'POST'])
 def adjust():
     ''' AJAX CALL: Adjust user'''  
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     if "username" not in request.json or "cats" not in request.json:
         # Error (No username, cats is given) --> return Error.js
         return jsonify({"status" : "failed", "code" : 7, "msg" : "No username/categories are given"})
@@ -114,6 +121,7 @@ def adjust():
 @app.route('/set_to_zero', methods=['GET', 'POST'])
 def set_to_zero():
     ''' AJAX CALL: Set category for user to zero'''  
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     if "username" not in request.json or "cat" not in request.json:
         # Error (No username, cats is given) --> return Error.js 
         return jsonify({"status" : "failed", "code" : 7, "msg" : "No username/category is given."})
@@ -129,6 +137,7 @@ def set_to_zero():
 @app.route('/delete_user', methods=['GET', 'POST'])
 def delete_user():
     ''' AJAX CALL: delete user'''   
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     if "username" not in request.json:
         # Error (No username is given)
         return jsonify({"status" : "failed", "code" : 3, "msg" : "No username is given."})
@@ -143,11 +152,13 @@ def delete_user():
 @app.route('/get_categories', methods=['GET', 'POST'])
 def get_categories():
     ''' AJAX CALL: Get all categories'''
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     return jsonify({"status" : "succes", "list" : [x for x in config.CATEGORIES]})
 
 @app.route('/get_analytics', methods=['GET', 'POST'])
 def get_analytics():
     ''' AJAX CALL: get analytics'''
+    analytics.REMOTE_ADDRS.append(request.remote_addr)
     con = config.get_connection()
     context = {}
 
@@ -160,4 +171,9 @@ def get_analytics():
 
 if __name__ == "__main__":
     # Start
+    analysis_thread = Thread(target=analytics.run)
+    analysis_thread.daemon = True
+    analysis_thread.name = "Flask - Analyse"
+    analysis_thread.start()
+
     app.run()
