@@ -120,8 +120,9 @@ class Profiler():
             # No profiler exists, create one
             self.category = [0 for i in config.CATEGORIES]
             self.data_length = 0
-            result = database.commit_query("INSERT INTO profiler(username, category, length, timestamp) VALUES (%s, %s, %s, %s);",
-                                         (username, ' '.join(map(str, self.category)), self.data_length, datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S")),con=mysql_con, close_con=False)
+            self.finished = False
+            result = database.commit_query("INSERT INTO profiler(username, category, length, timestamp, finished) VALUES (%s, %s, %s, %s, %s);",
+                                         (username, ' '.join(map(str, self.category)), self.data_length, datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S"), False),con=mysql_con, close_con=False)
             if result <= 0:
                 # Error
                 print("[WARNING] Can't add Profiler for " + username)
@@ -136,7 +137,8 @@ class Profiler():
             self.update_timestamp()
 
             self.category = [float(x) for x in result[0][1].split(' ')]
-            self.data_length = result[0][2]    
+            self.data_length = result[0][2]  
+            self.finished = "1" in result[0][4]
 
         mysql_con.close()
         # Start finder thread
@@ -153,64 +155,51 @@ class Profiler():
         
     def update(self):
         # Update category, data_length, timestamp in database
-        query = "UPDATE profiler SET category=%s, length=%s, timestamp=%s WHERE username=%s;"
+        query = "UPDATE profiler SET category=%s, length=%s, timestamp=%s, finished=%s WHERE username=%s;"
         str_arr = ' '.join(map(str, self.category))
-        result = database.commit_query(query, (str_arr, self.data_length, datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S"), self.username))
+        result = database.commit_query(query, (str_arr, self.data_length, datetime.utcnow().strftime("%d.%m.%YT%H:%M:%S"), self.finished, self.username))
 
-    def add_categories(self, _output, factor):
+    def add_categories(self, _output):
         l = _output.data[0].tolist()
         self.data_length += 1
 
-        if self.data_length == 1:
-            # First data --> Next one
-            self.category = l
-            return
+        # Just Add it
+        self.category = [(self.category[index] + x) for index, x in enumerate(l)]
 
-        # Get 5 highest categories
-        top_cats = []       
-        cat = l.copy()      
-        while len(top_cats) < 5:
-            highest = (0, -1) # (value, cat_index)
-            for index, x in enumerate(cat):
-                if highest[1] == -1 or x > highest[0]:
-                    # first or better
-                    highest = (x, index)
-
-            top_cats.append(highest)
-            cat[highest[1]] = 0
-
-        # Only calc averages for the 5 main categories
-        for value, index in top_cats:
-            self.category[index] = (self.category[index] + value * factor) / (1 + factor)
-
-        self.update()
-        return
-
-        if self.data_length == 0:
-            # First data
-            self.category = l
-        else:
-            # Calc average
-            self.category = [((self.category[i] + l[i] * factor) / (1 + factor)) for i in range(len(self.category))]
-
-        self.data_length += 1
         self.update()
 
     def analyze_activity(self):
-        # Posts
-        for comment in self.account.history_reverse(only_ops=['comment']):
-            if comment['author'] != self.username:
-                # Activity, he does not (Someone else commented at his blog...)
-                continue
+        for comment in self.account.history_reverse(only_ops=['comment', 'vote']):
+            if comment['type'] == 'vote':
+                # Votes by himself
+                if comment['voter'] == self.username and comment['voter'] != comment['author']:
+                # If I am the voter and it is not my post
+                    c = Comment(f"@{comment['author']}/{comment['permlink']}", blockchain_instance=Hive())
+                    
+                    # vectorize
+                    _input = WordEmbedding.vectorize_text(model=config.statics.Word2Vec, html=c.body, text=c.title + ". ")
+                    if _input is None:
+                        continue
 
-            _input = WordEmbedding.vectorize_text(model=config.statics.Word2Vec, html=comment['body'], text=comment['title'] + ". ")
-            if _input is None:
-                # To less words or Error
-                continue
+                    _output = config.statics.TextCNN(_input).cpu()
+                    self.add_categories(_output)
+                else:
+                    # Goto start --> No wait
+                    continue
+            
+            if comment['type'] == 'comment':
+                # Post or comment
+                if comment['author'] != self.username:
+                    # Activity, he does not (Someone else commented at his blog...)
+                    continue
 
-            _output = config.statics.TextCNN(_input).cpu()
-            self.add_categories(_output, factor=2) # Posts count double
-            time.sleep(0.5)
+                _input = WordEmbedding.vectorize_text(model=config.statics.Word2Vec, html=comment['body'], text=comment['title'] + ". ")
+                if _input is None:
+                    # To less words or Error
+                    continue
+
+                _output = config.statics.TextCNN(_input).cpu()
+                self.add_categories(_output)
 
             if self.data_length >= config.PROFILER_MIN_DATA:
                 # make brake
@@ -218,85 +207,101 @@ class Profiler():
             if self.data_length >= config.PROFILER_MAX_DATA:
                 break
 
-        # Votes
-        return
-        for vote in self.account.history_reverse(only_ops=['vote']):
-            if vote['voter'] == self.username and vote['voter'] != vote['author']:
-                # If I am the voter and it is not my post
-                c = Comment(f"@{vote['author']}/{vote['permlink']}", blockchain_instance=Hive())
-                
-                # vectorize
-                _input = WordEmbedding.vectorize_text(model=config.statics.Word2Vec, html=c.body, text=c.title + ". ")
-                if _input is None:
-                    continue
+        self.finished = True
+        self.update()
+        
+    def adjust(self, adjust_categories = [], categories_as_strings = []):
+        # adjust_categories as indexes [5, 0 , 4...]
+        # categories_as_strings as string [coding, future...]
 
-                _output = config.statics.TextCNN(_input).cpu()
-                self.add_categories(_output, factor=1)
+        # Make cat_string list to indexes:
+        for cat in categories_as_strings:
+            for index, _ in enumerate(config.CATEGORIES):
+                if cat == config.CATEGORIES[index]:
+                    adjust_categories.append(index)
 
-                # wait for next request --> Prevent overflow
-                time.sleep(0.9)
-            
-            if self.data_length >= config.PROFILER_MAX_DATA:
-                break
+        # Categories valued as two posts. 
+        # To get the post amount: cat / data_lenght = average_post_amount
+
+        # Adjust
+        for index in adjust_categories:
+            self.category[index] += float(self.category[index] / self.data_length) * 2
+
+        # Update
+        self.update()
+
+        # Delete old
+        database.commit_query("DELETE FROM interesting_posts WHERE username=%s", (self.username, ))
+
+    def set_zero(self, category = "", index = -1):
+        if category != "":
+            for i, cat in enumerate(config.CATEGORIES):
+                if cat == category:
+                    index = i
+                    break
+
+        if index > -1:
+            self.category[index] = 0
+
+        self.update()
+        # Delete old
+        database.commit_query("DELETE FROM interesting_posts WHERE username=%s", (self.username, ))
 
     def find_interestings(self):
+        mysql_con = config.get_connection()
+
         while self.data_length < config.PROFILER_MIN_DATA:
             # Wait until enough data is availabel
             time.sleep(0.2)
 
-        mysql_con = config.get_connection()
+        percentages, top_cats = [], []
+        last_data_len = -1       
         while 1:
             # 0 Step: Check if post limit is reached
             interesting_posts = database.read_query("SELECT * FROM interesting_posts WHERE username=%s", (self.username, ), con=mysql_con, close_con=False)
             if len(interesting_posts) >= config.MAX_INTERSTING_POSTS:
                 break                   
 
-            # 1 Step: get top 10 profiler categories
-            top_cats = []       
-            cat = self.category.copy()      
-            while len(top_cats) < 10:
-                highest = (0, -1) # (value, cat_index)
-                for index, x in enumerate(cat):
-                    if highest[1] == -1 or x > highest[0]:
-                        # first or better
-                        highest = (x, index)
+            # 1 Step: Calc percentages and top cats
+            if len(percentages) == 0 or last_data_len != self.data_length:
+                # If no percentages are calced or data_length increased
+                last_data_len = self.data_length
 
-                top_cats.append(highest)
-                cat[highest[1]] = 0
+                percentages = helper.calc_percentages(self.category)
+                top_cats = helper.get_top_elements(percentages, 10)   
             
-            # 2 Step: get 35 posts and prepare SVC data
-            x = []
-            y = []
+            # 2 Step: get random Posts
             offset = random.randint(0, config.statics.LATEST_POSTS_START_LIMIT - 50) # random offset
             posts = database.read_query("SELECT * FROM latest_posts LIMIT " + str(offset) + ", 50;", (), con=mysql_con, close_con=False)
-            while len(y) < 35:
-                p = random.choice(posts)
-                author, permlink, category, timestamp = p
 
+            # 3 Step: prepare posts to compare
+            post_percentages = [] # ([top_percentages], author, permlink)
+            for author, permlink, category, timestamp in posts:
                 category = [float(x) for x in category.split(' ')]
-                arr = []
-                for _, index in top_cats:
-                    arr.append(category[index])
 
-                x.append(arr)
-                y.append(f"{author}/{permlink}")
-            del posts
-                
-            # 3 Step: make SVC and predict_proba            
-            clss = SVC(kernel='poly', probability=True)
-            clss.fit(x, y)
-            c = [item[0] for item in top_cats]
-            y_pred = clss.predict_proba([c])[0]
+                # Calc percentages and top ones
+                percs = helper.calc_percentages(category)
+                top_pers = helper.get_top_elements(percs, 10)
 
-            # 4 Step: Check results and enter
-            for index, pred in enumerate(y_pred):
-                if pred >= config.INTERESTING_FACTOR:
-                    # Found good one, enter
-                    author = y[index].split('/')[0]
-                    permlink = y[index].split('/')[1]
+                post_percentages.append((top_pers, author, permlink))
 
+
+            # 4 Step: Compare
+            for top_pers, author, permlink in post_percentages:
+                score = 0
+                diff = 0
+                for value, index in top_cats:
+                    for p_value, p_index in top_pers:
+                        diff += abs(value - p_value)
+                        if p_index == index:
+                            # Same top Category
+                            score += 1
+
+                #if score >= 7:
+                if diff <= 2:
                     exists = database.read_query("SELECT author FROM interesting_posts WHERE username=%s AND author=%s AND permlink=%s;",
                                                 (self.username, author, permlink), con=mysql_con, close_con=False)
+
                     if len(exists) > 0:
                         # Already listed --> Next one
                         continue
@@ -308,8 +313,7 @@ class Profiler():
                         print("[WARNING] Can't insert an interesting post!")
                         time.sleep(5)
 
-        self.update_timestamp()
-
+            self.update_timestamp()
 
     @staticmethod
     def remove_old_profiler():
