@@ -63,9 +63,7 @@ class LatestPostManager():
             timestamp = datetime.strptime(item[0], "%d.%m.%YT%H:%M:%S")
             
             if timestamp < (datetime.utcnow() - timedelta(days=5)):
-                result = database.commit_query("DELETE FROM latest_posts WHERE timestamp = %s;", (item[0], ))
-                if result <= 0:
-                    print("[WARNING] Can't delete old posts. Result: " + str(result))
+                result = database.commit_query("DELETE FROM latest_posts WHERE timestamp=%s;", (item[0], ))
 
     def run(self):
         current_num = self.chain.get_current_block_num() - int(60*60*24*3/3) # Get all posts from the last 3 days because it takes a long time to get all and when it finished, the clean_up begins
@@ -77,10 +75,12 @@ class LatestPostManager():
                         self.enter_posts_by_block(block)
                 except:
                     pass
-                
-                time.sleep(0.5)
+                               
                 current_num += 1
-
+                if current_num % 100 == 0:
+                    self.clean_up()
+                else:
+                    time.sleep(0.5)
                 
             else:
                 # wait until new block is created
