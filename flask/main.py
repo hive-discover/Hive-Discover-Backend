@@ -158,15 +158,31 @@ def get_categories():
 @app.route('/get_analytics', methods=['GET', 'POST'])
 def get_analytics():
     ''' AJAX CALL: get analytics'''
-    analytics.REMOTE_ADDRS.append(request.remote_addr)
     con = config.get_connection()
     context = {}
+    context["status"] = "succes"
 
     # Get tasks_running
     element = database.read_query("SELECT value_one FROM analytics WHERE name=%s;", ("tasks_running", ), con=con, close_con=False)[0] # [(value, )]
     context["tasks_running"] = int(element[0])
-    context["status"] = "succes"
+
+    # Get connections
+    element = database.read_query("SELECT value_one FROM analytics WHERE name=%s;", ("connections", ), con=con, close_con=False)[0] # [(value, )]
+    context["connections"] = int(element[0])
+
+    # Get requests
+    element = database.read_query("SELECT value_one FROM analytics WHERE name=%s;", ("requests", ), con=con, close_con=False)[0] # [(value, )]
+    context["requests"] = int(element[0])
     
+    # Get latest_post count
+    result = database.read_query("SELECT COUNT(*) FROM latest_posts", (), con=con, close_con=False) # return [(COUNT,)]
+    context["count_latest_posts"] = result[0][0]
+
+    # Get profiler count
+    result = database.read_query("SELECT COUNT(*) FROM profiler", (), con=con, close_con=False) # return [(COUNT,)]
+    context["count_accounts"] = result[0][0]
+    
+    con.close()
     return jsonify(context)
 
 if __name__ == "__main__":
