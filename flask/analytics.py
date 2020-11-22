@@ -31,6 +31,6 @@ def run():
                                 (connection_count, "connections"), con=con, close_con=False)
 
         # wait a second (exactly)        
-        time.sleep(val = (1000 - (time.time() - start_time)) / 1000)
+        time.sleep((1000 - (time.time() - start_time)))
 
         
