@@ -1,0 +1,9 @@
+pymongo
+Flask
+flask-cors
+beem==0.24.13
+spacy
+rank_bm25
+nmslib
+ftfy
+numpy
