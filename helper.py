@@ -7,8 +7,12 @@ import string
 import spacy
 from ftfy import * 
 
+import nltk
+from nltk.stem.wordnet import WordNetLemmatizer
+
 
 nlp = spacy.load("en_core_web_sm")
+nltk.download("wordnet")
 
 
 def html_to_text(html : str) -> str:
@@ -44,6 +48,9 @@ def pre_process_text(text : str) -> str:
     text = re.sub(r'[%s]' % re.escape(string.punctuation), ' ', text)
     text = re.sub(r'[0-9]', '', text)
     text = re.sub(r'\s{2,}', ' ', text)
+
+    # Lemmatize
+    text = statics.LEMMATIZER.lemmatize(text)
 
     return text
 
