@@ -4,49 +4,51 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
+import fasttext
+
 import os
 
+EMBEDDING_DIM = 300
+WINDOW_SIZES = (1, 2, 3, 5, 8)
+KERNEL_NUM = 128
 
-EMBEDDING_DIM = 100
-LEARNING_RATE = 0.001
-WINDOW_SIZES = (2, 3, 4, 5)
-KERNEL_NUM = 100
+
+def get_all_vocabs_as_sentence()->list:
+    '''Return a list of all vocabs inside word2vec for search'''
+    return [str(w) for w in statics.FASTTEXT_MODEL.wv.vocab]#statics.WORD2VEC_MODEL.wv.vocab]
 
 
 class TextCNN(nn.Module):
     def __init__(self):
-        super(TextCNN, self).__init__()
-
-        self.convs1 = nn.ModuleList([
-                          nn.Conv2d(1, KERNEL_NUM, (i, EMBEDDING_DIM)) for i in WINDOW_SIZES ])
-    
+        super(TextCNN, self).__init__()      
+                      
+        self.convs = nn.ModuleList([
+                            nn.Conv2d(1, KERNEL_NUM, (i, EMBEDDING_DIM)) for i in WINDOW_SIZES ])
         self.dropout = nn.Dropout(0.15)
-    
-        self.hid = nn.Linear(KERNEL_NUM * 2, KERNEL_NUM)
-        self.out1 = nn.Linear(KERNEL_NUM, KERNEL_NUM)
-        self.out2 = nn.Linear(KERNEL_NUM, len(CATEGORIES))
+        
+        self.fc1 = nn.Linear(KERNEL_NUM * len(WINDOW_SIZES), KERNEL_NUM)
+        self.fc2 = nn.Linear(KERNEL_NUM, len(CATEGORIES))
         self.relu = nn.ReLU()
 
-    def forward(self, x):
-        # CONV1
-        xs = [] 
-        for conv in self.convs1:
+    def forward(self, x): 
+        # Convs Layer
+        xs = []
+        for conv in self.convs:
             x2 = T.tanh(conv(x.unsqueeze(1)))
             x2 = T.squeeze(x2, -1)
             x2 = F.max_pool1d(x2, x2.size(2))
             x2 = self.dropout(x2)
             xs.append(x2)
+        x = T.cat(xs, 2)
         
-        hidden = T.zeros(KERNEL_NUM)
-        for x2 in xs:
-            hidden = self.hid(T.cat((x2.squeeze(0).squeeze(1), hidden), 0))
-            hidden = self.relu(hidden)
+        # FC1
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
 
-            out = self.relu(self.out1(hidden))
-            out = self.out2(out).unsqueeze(0)
-
-        return F.softmax(out, dim=1)
-
+        # FC2
+        x = self.fc2(x)
+        x = F.softmax(x, dim = 1)
+        return x
 
     @staticmethod
     def load_model() -> tuple:
@@ -62,6 +64,26 @@ class TextCNN(nn.Module):
 
         return (model, from_disc)
 
+
+class LangDetector():
+    def __init__(self, load_model) -> None:
+        '''Loads the lang-model'''
+        self.model = None
+
+        if load_model:
+            # Load
+            self.model = fasttext.load_model(LANG_FASTTEXT_MODEL)
+
+    def predict_lang(self, text : str) -> list:
+        '''
+        Predict the language of a given text and return label of of predicted language.
+        Returns in this way: ["__label__en", ...]for example english
+        '''
+
+        # prediction = (("label_1", "label_2"), array(0.4, 0.5))
+        prediction = self.model.predict(text, k=2)
+        
+        return prediction[0] 
 
 
         
