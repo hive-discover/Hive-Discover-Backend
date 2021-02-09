@@ -1,121 +1,98 @@
-from flask_server import start_server
-from agents import *
+from multi_agents import *
 from config import *
-from network import TextCNN, LangDetector
-from hive import AccountsManager, PostsManager
 
 from threading import Thread
+from multiprocessing import Process, Event, Queue
 import time
 
-from gensim.models import word2vec, KeyedVectors
+stop_event = Event()
+account_manager_queue = Queue()
+stats_manager_queue = Queue()
 
-def handle_task(task : dict, running_tasks : list):
-   '''Do the job'''
-
-   if task["job"] == "make_feed":
-      profiler = Profiler(task["username"])
-      profiler.make_feed()
-
-   # Release
-   running_tasks.remove(task)
-
-def task_manager():
-   '''Manage all incoming tasks'''
-
-   running_tasks = []
-   while 1:
-      if len(statics.OPEN_TASKS) == 0 or len(running_tasks) > MAX_RUNNING_TASKS:
-         # Nothing to do
-         time.sleep(0.1)
-         continue
-
-      # something to do --> get first and pop it
-      task = statics.OPEN_TASKS[0]
-      statics.OPEN_TASKS.pop(0)
-
-      if task in running_tasks:
-         # Already running
-         continue
-      
-      # TODO: Implement rules (optionally)
-      
-      # Start the job
-      running_tasks.append(task)
-      t = Thread(target=handle_task, args=(task, running_tasks), daemon=True, name=f"Do Task - {len(running_tasks)}")
-      t.start()
-
-
-
-
-def init():
-   '''Load all data'''
-
-   # 1. Load Word-2-Vec / Fastteext Model
-   print("", end=f"\r Load:   Fasttext: ...")
-   statics.FASTTEXT_MODEL = KeyedVectors.load(FASTTEXT_MODEL_PATH)
-  # statics.WORD2VEC_MODEL = word2vec.Word2Vec.load(WORD2VEC_MODEL_PATH)
-   
-   # 2. Load Fasttext Lang Detector
-   print("", end=f"\r Load:   Word2Vec: OK  Lang-Detector: ...")
-   statics.LANG_DETECTOR = LangDetector(load_model=True)
-
-   # 3. Load TextCNN Model
-   print("", end=f"\r Load:   Word2Vec: OK   Lang-Detector: OK   TextCNN: ...")
-   statics.TEXTCNN_MODEL, from_disc = TextCNN.load_model()
-
-   print("", end=f"\r Load:   Word2Vec: OK   TextCNN: OK   ")
-   if not from_disc:
-      print("", end=f"\r Load:   Word2Vec: OK   Lang-Detector: OK   TextCNN: OK (created new one)")
-
+def old_main():
+   '''Start all'''
+   # Setup all statics
+   statics.STATISTIC_AGENT = Statistics()
+   statics.POSTS_MANAGER = PostsManager()
+   statics.POSTS_CATEGORY = PostsCategory()
    statics.LEMMATIZER = Lemmatizer()
+   statics.ACCOUNTS_MANAGER = AccountsManager()
+   statics.ACCOUNTS_SEARCHER = AccountSearch()
+   statics.ACCESS_TOKEN_MANAGER = AccessTokenManager()
 
-   
-def main():
-   # Start Flask Server
+   # 1. Start Flask Server
    t = Thread(target=start_server, daemon=True, name="Flask Server - Thread")
    t.start()
    statics.THREADS_RUNNING.append(t)
-
-   # Posts Manager
-   statics.POSTS_MANAGER = PostsManager()
-   t = Thread(target=statics.POSTS_MANAGER.get_latest_posts, daemon=True, name="Posts Manager - Thread")
+   
+   # 2. Statistics Manager 
+   t = Thread(target=statics.STATISTIC_AGENT.run, daemon=True, name="Statistics - Thread")
    t.start()
    statics.THREADS_RUNNING.append(t)
 
-   # Post Searcher - Create Indexer
-   statics.POST_SEARCH_AGENT = PostSearcher()
-   t = Thread(target=statics.POST_SEARCH_AGENT.create_search_index, daemon=True, name="Search Indexer - Thread")
-   t.start()
-   statics.THREADS_RUNNING.append(t)
-
-   # Post Categories - Create Indexer
-   statics.POSTS_CATEGORY = PostsCategory()
+   # 3. Post Categories - Create Indexer  
    t = Thread(target=statics.POSTS_CATEGORY.create_search_index, daemon=True, name="Category Indexer - Thread")
    t.start()
    statics.THREADS_RUNNING.append(t)
 
-   # Account Manager - 
-   statics.ACCOUNTS_MANAGER = AccountsManager()
+   # 4. Posts Categoroy - Anti Plagialism
+   t = Thread(target=statics.POSTS_CATEGORY.anti_plagiarlism, daemon=True, name="Anti Plagialism - Thread")
+   t.start()
+   statics.THREADS_RUNNING.append(t)
+
+   # 5. Account Manager - Runner 
    t = Thread(target=statics.ACCOUNTS_MANAGER.run, daemon=True, name="Accounts Manager - Thread")
    t.start()
    statics.THREADS_RUNNING.append(t)
 
-   # Account Search - Create Indexer
-   statics.ACCOUNTS_SEARCHER = AccountSearch()
-   t = Thread(target=statics.ACCOUNTS_SEARCHER.create_search_index, daemon=True, name="Accounts Indexer - Thread")
+   # 6. Account Search - Create Index
+   t = Thread(target=statics.ACCOUNTS_SEARCHER.create_search_index, daemon=True, name="Account Indexer - Thread")
    t.start()
    statics.THREADS_RUNNING.append(t)
 
-
-   # Task Manager
-   t = Thread(target=task_manager, daemon=True, name="Task Manager - Thread")
+   # 7. Chain Listener
+   t = Thread(target=listen_to_blockchain, daemon=True, name="Chain Listener - Thread")
    t.start()
    statics.THREADS_RUNNING.append(t)
+
+   # 8. Access Token Manager 
+   t = Thread(target=statics.ACCESS_TOKEN_MANAGER.run, daemon=True, name="AccessToken Manager - Thread")
+   t.start()
+   statics.THREADS_RUNNING.append(t)
+
+   # 9. Load Files
+   #load_data()
 
    while 1:
       time.sleep(1)
 
+def main():
+   mp_posts = MP_PostsAnalyse(stop_event)
+   mp_chain_listener = MP_ChainListener(stop_event)
+   mp_account_manager = MP_AccountManager(stop_event, account_manager_queue)
+   mp_api_handler = MP_APIHandler(stop_event, account_manager_queue, stats_manager_queue)
+   mp_stats_handler = MP_StatsManager(stop_event, stats_manager_queue)
+
+   mp_posts.start()
+   mp_chain_listener.start()
+   mp_account_manager.start()
+   mp_api_handler.start()
+   mp_stats_handler.start()
+
+   # MainThread
+   while 1:
+      _input = input()
+      if "exit" in _input or "break" in _input:
+         break
+
+   stop_event.set()
+   mp_posts.join(timeout=10)
+   mp_chain_listener.join(timeout=10)
+   mp_account_manager.join(timeout=10)
+   mp_api_handler.join(timeout=10)
+   mp_stats_handler.join(timeout=10)
+
 
 if __name__ == '__main__':
-   init()
    main()
+
