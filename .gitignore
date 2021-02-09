@@ -1,0 +1,10 @@
+*.ipynb
+.vscode/*
+*.pycache
+*.pyc
+*.npy
+*.ftz
+*.model
+*.bin
+*.pt
+*.gen
