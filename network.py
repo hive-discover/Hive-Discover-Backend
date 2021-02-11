@@ -66,7 +66,7 @@ class TextCNN(nn.Module):
 
 
 class LangDetector():
-    def __init__(self, load_model) -> None:
+    def __init__(self, load_model = True) -> None:
         '''Loads the lang-model'''
         self.model = None
 
@@ -77,13 +77,20 @@ class LangDetector():
     def predict_lang(self, text : str) -> list:
         '''
         Predict the language of a given text and return label of of predicted language.
-        Returns in this way: ["__label__en", ...]for example english
+        Returns in this way: [{"lang" : "en", "x" : 0.99}, ...]
         '''
 
-        # prediction = (("label_1", "label_2"), array(0.4, 0.5))
-        prediction = self.model.predict(text, k=2)
-        
-        return prediction[0] 
+        # predict returns something like(("label_1", "label_2"), array(0.4, 0.5))
+        labels, scores = self.model.predict(text, k=3)
+
+        # Get only langs that could be (score above 0.2)
+        predictions = []
+        for label, score in zip(labels, scores):
+            if score > 0.2:
+                predictions.append((label.replace("__label__", ""), score))
+
+
+        return [{"lang" : label, "x" : score} for label, score in predictions]
 
 
         
