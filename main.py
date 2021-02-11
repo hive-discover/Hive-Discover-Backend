@@ -1,5 +1,6 @@
 from multi_agents import *
 from config import *
+from flask_server import app
 
 from threading import Thread
 from multiprocessing import Process, Event, Queue
@@ -73,11 +74,11 @@ def main():
    mp_api_handler = MP_APIHandler(stop_event, account_manager_queue, stats_manager_queue)
    mp_stats_handler = MP_StatsManager(stop_event, stats_manager_queue)
 
-   mp_posts.start()
+   #mp_posts.start()
    mp_chain_listener.start()
-   mp_account_manager.start()
+   #mp_account_manager.start()
    mp_api_handler.start()
-   mp_stats_handler.start()
+   #mp_stats_handler.start()
 
    # MainThread
    while 1:
@@ -86,11 +87,11 @@ def main():
          break
 
    stop_event.set()
-   mp_posts.join(timeout=10)
+   #mp_posts.join(timeout=10)
    mp_chain_listener.join(timeout=10)
-   mp_account_manager.join(timeout=10)
+   #mp_account_manager.join(timeout=10)
    mp_api_handler.join(timeout=10)
-   mp_stats_handler.join(timeout=10)
+   #mp_stats_handler.join(timeout=10)
 
 
 if __name__ == '__main__':

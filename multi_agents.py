@@ -48,8 +48,6 @@ class MP_PostsAnalyse(Process):
             text += post["title"] + ". "
         if "body" in post:
             text += post["body"] + ". "
-        if "tags" in post:
-            text += post["tags"] + ". "
 
         if len(text.split(' ')) > 2:
             text = self.helper.pre_process_text(text, lmtz=self.lmtz)
@@ -141,96 +139,176 @@ class MP_ChainListener(Process):
         self.post_table = self.mongo_client[DATABASE_NAME].posts
 
         from beem import Hive 
-        from beem.nodelist import NodeList
         from beem.blockchain import Blockchain
-        self.instance = Hive(node=NodeList().get_nodes(hive=True))
+        self.instance = Hive()
         self.chain = Blockchain(blockchain_instance=self.instance)
-        self.current_num = self.chain.get_current_block_num() - int(60*60*24/3 * 5) # Blocks by the last 5 days (Every 3 seconds a new block)
+        self.current_num = self.chain.get_current_block_num() - 500# - int(60*60*24/3 * 5) # Blocks by the last 5 days (Every 3 seconds a new block)
 
-    def account_update(self, username : str, metadata : dict):
-        '''Got account_update operation and update it now'''
-        try:
-            metadata = json.loads(metadata)
-        except json.JSONDecodeError:
-            metadata = {}
+    def account_updates(self, actions : list) -> None:
+        '''Got account_update operation and update all now'''    
+        # Iterate through all updates
+        tasks_running = []
+        for action in actions:
+            username, metadata = action["account"], action["json_metadata"]
 
-        if "profile" in metadata:
-            metadata = metadata["profile"]
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
 
-        # Retrieve all possible data
-        profile = {}        
-        if "name" in metadata:
-            profile["name"] = metadata["name"]
-        if "about" in metadata:
-            profile["about"] = metadata["about"]
-        if "location" in metadata:
-            profile["location"] = metadata["location"]
+            if "profile" in metadata:
+                metadata = metadata["profile"]
 
-        # Enter. Also if nothing is in profile because maybe user deleted 
-        self.account_table.update_one({"name" : username}, {"$set" : {"profile" : profile}})
+            # Retrieve all possible data
+            profile = {}        
+            if "name" in metadata:
+                profile["name"] = metadata["name"]
+            if "about" in metadata:
+                profile["about"] = metadata["about"]
+            if "location" in metadata:
+                profile["location"] = metadata["location"]
 
-    def account_vote(self, username : str, author : str, permlink : str):
+            # Enter. Also if nothing is in profile because maybe user deleted some entries
+            t = Thread(
+                target=self.account_table.update_one,
+                args=({"name" : username}, {"$set" : {"profile" : profile}}),
+                name=f"Update Account - {username}", daemon=True)
+            t.start()
+            tasks_running.append(t)
+
+        # Wait for all tasks to finish (max. 2sec)
+        for task in tasks_running:
+            task.join(timeout=2)
+        return
+
+    def account_votes(self, actions : list) -> None:
         '''Adds a vote to an account which is already analyzed'''
-        acc = self.account_table.find_one({"name" : username})
-        if not acc:
-            # Account is not listed, so it is also never analyzed
-            self.open_usernames.append(username)
+        if len(actions) == 0:
             return
 
-        # Find voted Post
-        post = self.post_table.find_one({"author" : author, "permlink" : permlink})
-        if not post:
-            # It is not listed, maybe deleted, maybe comment, maybe nsfw or something else, Just abort
-            return
+        # Prepare everything
+        voters = [x["voter"] for x in actions]
+        authors = [x["author"] for x in actions]
+        permlinks = [x["permlink"] for x in actions]
+        posts = [post for post in self.post_table.find({"author" : {"$in" : authors}, "permlink" : {"$in" : permlinks}})]
 
-        self.account_table.update_one({"name" : username}, {"$push" : {"votes" : post["post_id"] }}, upsert=True)
+        # Get all accounts from DB. When loading is False, it is analyzed but not currently 
+        tasks_running = []
+        for acc in self.account_table.find({"name" : {"$in" : voters}, "loading" : False}):
+            vote_index = -1
+            for index, voter in enumerate(voters):
+                if voter == acc["name"]:
+                    # Found correct vote and his index
+                    vote_index = index
+                    break
 
-    def account_post(self, action, timestamp):
-        '''Enter Post in DB and add it into post_list from the author document (if analyzed)'''
-        # Enter Post
+            if vote_index >= 0:
+                # Find post_id and push it
+                voter, author, permlink = voters[vote_index], authors[vote_index], permlinks[vote_index]
+                for post in posts:
+                    if post["author"] == author and post["permlink"] == permlink:
+                        # Found correct --> push in another Thread
+                        t = Thread(
+                                target=self.account_table.update_one,
+                                args=({"name" : voter}, {"$push" : {"votes" : post["post_id"] }}), name=f"Push Vote - {voter}", 
+                                daemon=True)
+                        t.start()
+                        tasks_running.append(t)
+                        break
+
+        # wait for all tasks to finish (max. 2sec)
+        for task in tasks_running:
+            task.join(timeout=2)
+        return
+
+
+        def old():
+            acc = self.account_table.find_one({"name" : username})
+            if not acc:
+                # Account is not listed, so it is also never analyzed
+                self.open_usernames.append(username)
+                return
+
+            # Find voted Post
+            post = self.post_table.find_one({"author" : author, "permlink" : permlink})
+            if not post:
+                # It is not listed, maybe deleted, maybe comment, maybe nsfw or something else, Just abort
+                return
+
+            self.account_table.update_one({"name" : username}, {"$push" : {"votes" : post["post_id"] }}, upsert=True)
+
+    def account_posts(self, posts, timestamp):
+        '''Enter Posts in DB and add it into post_list from the author document (if analyzed)'''
+        author_list = [post["author"] for post in posts]
+        post_ids = PostsManager.append_posts(
+                                self.post_table, self.banned_table, posts, timestamp,
+                                update=True, helper=self.helper
+                                )
+
+        # Enter Posts in Post-List by an analyzed account
+        # When loading is False, no one is analyzing him and it was analyzed so it's perfect
+        for account in self.account_table.find({"name" : {"$in" : author_list}, "loading" : False}):
+            # Find correct post, get index and push post_id
+            for index, post in enumerate(posts):
+                if post["author"] == account["name"]:
+                    self.account_table.update_one({"name" : account["name"]}, {"$push" : {"posts" : post_ids[index] }}, upsert=True)
+
+        return
+
+        def old():
+            # Enter Post    
+            post_id = PostsManager.append_post(self.post_table, self.banned_table, action, timestamp, update=True, helper=self.helper)
+            if post_id < 0:
+                return
+
+            # Find Acc
+            acc = self.account_table.find_one({"name" : action["author"]})
+            if not acc:
+                # Account is not listed, so it is also never analyzed
+                self.open_usernames.append(action["author"])
+                return 
+
+            # Enter it, if posts are listed
+            if "posts" in acc:
+                self.account_table.update_one({"name" : action["author"]}, {"$push" : {"posts" : post_id}}, upsert=True)
+
+    def filter_transactions(self, operations) -> tuple:
+        '''Filter for interesting operations and return them like: (post_ops, vote_ops, acc_ops) <-- all lists'''
+        post_ops, vote_ops, acc_update_ops = [], [], []
+        for op in operations:
+            action = op['value']
+
+            if op['type'] == 'comment_operation' and action['parent_author'] == '':
+                # found Post, no comment
+                post_ops.append(action)
+                #username = action["author"]
+                #task = Thread(target=self.account_post, args=(action, block["timestamp"]), name=f"Account Post - {username}", daemon=True)
+            elif op['type'] == 'vote_operation':
+                # found Vote
+                vote_ops.append(action)
+                #username = action["voter"]
+                #task = Thread(target=self.account_vote, args=(username, action["author"], action["permlink"]), name=f"Account Vote - {username}", daemon=True)
+            elif op['type'] == 'account_update_operation':
+                # found Account Update
+                acc_update_ops.append(action)
+                #username = action["account"]
+                #task = Thread(target=self.account_update, args=(username, action["json_metadata"]), name=f"Account Update - {username}", daemon=True)
         
-        post_id = PostsManager.append_post(self.post_table, self.banned_table, action, timestamp, update=True, helper=self.helper)
-        if post_id < 0:
-            return
-
-        # Find Acc
-        acc = self.account_table.find_one({"name" : action["author"]})
-        if not acc:
-            # Account is not listed, so it is also never analyzed
-            self.open_usernames.append(action["author"])
-            return 
-
-        # Enter it, if posts are listed
-        if "posts" in acc:
-            self.account_table.update_one({"name" : action["author"]}, {"$push" : {"posts" : post_id}}, upsert=True)
+        return (post_ops, vote_ops, acc_update_ops)
 
     def process_block(self, block):
         '''Processes one block, filter and do updates'''
         tasks_running = []
-        for op in block.operations:
-            action = op['value']
-            task = None
+        post_ops, vote_ops, acc_update_ops = self.filter_transactions(block.operations)
+        
+        tasks_running.append(Thread(target=self.account_posts, args=(post_ops, block["timestamp"]), name="Post Updates", daemon=True))
+        tasks_running.append(Thread(target=self.account_votes, args=(vote_ops,), name="Vote Updates", daemon=True))
+        tasks_running.append(Thread(target=self.account_updates, args=(acc_update_ops,), name="Account Updates", daemon=True))
 
-            # Filter for operation
-            if op['type'] == 'comment_operation' and action['parent_author'] == '':
-                # found Post, no comment
-                username = action["author"]
-                task = Thread(target=self.account_post, args=(action, block["timestamp"]), name=f"Account Post - {username}", daemon=True)
-            elif op['type'] == 'vote_operation':
-                # found Vote
-                username = action["voter"]
-                task = Thread(target=self.account_vote, args=(username, action["author"], action["permlink"]), name=f"Account Vote - {username}", daemon=True)
-            elif op['type'] == 'account_update_operation':
-                # found Account Update
-                username = action["account"]
-                task = Thread(target=self.account_update, args=(username, action["json_metadata"]), name=f"Account Update - {username}", daemon=True)
+        # Start and then Wait for all tasks to finish (max. 10sec)
+        for task in tasks_running:
+            task.start()
 
-            if task:
-                # Start task
-                task.start()
-                tasks_running.append(task)
-
-        # Wait for all tasks to finish (max. 10sec)
         for task in tasks_running:
             task.join(timeout=10)
 
@@ -281,15 +359,16 @@ class MP_ChainListener(Process):
         self.mp_init()
         
         while self.stop_event.is_set() is False:
-            start_time = time.time()
+            sleep = 5
 
             if not self.get_latest_blocks():
                 # Add 10 sec to wait 10 seconds later
-                start_time += 10
+                sleep += 10
 
+            start_time = time.time()
             self.process_open_usernames()
 
-            while self.stop_event.is_set() is False and (time.time() - start_time) < 5:
+            while self.stop_event.is_set() is False and (time.time() - start_time) < sleep:
                 time.sleep(0.5)
 
 
@@ -497,17 +576,21 @@ class MP_APIHandler(Process):
 
     def mp_init(self):
         from flask_server import start_server
-        self.server_thread = Thread(target=start_server, args=(self,), name="Flask Server", daemon=True)
+        self.server_thread = Thread(target=start_server, args=(self, ), name="API Queue Managing", daemon=True)
         self.server_thread.start()
 
-        from agents import AccountSearch, AccessTokenManager
+        from agents import AccountSearch, PostSearch, AccessTokenManager
         AccountSearch.init()
+        PostSearch.init()
         self.indexer_thread = Thread(target=AccountSearch.create_search_index, name="Account Indexing", daemon=True)
         self.indexer_thread.start()
 
         AccessTokenManager.init()
         self.token_manager_thread = Thread(target=AccessTokenManager.run, name="Access Token Manager", daemon=True)
         self.token_manager_thread.start()
+
+        from hive import AccountsManager
+        AccountsManager.init()
         
     def run(self):
         self.mp_init()       
