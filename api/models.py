@@ -16,6 +16,11 @@ class Failed(BaseModel):
     msg : Optional[Dict]
     code : Optional[int]
 
+class Succes(BaseModel):
+    status : Optional[str]
+    info : Optional[str]
+    msg : Optional[Dict]
+    code : Optional[int]
 
 
 #   *** Posts ***
@@ -39,13 +44,9 @@ class PostsResponse(BaseModel):
 
 
 #   *** Accounts ***
-class AccountSearchMode(str, Enum):
-    username = "username"
-    profile_information = "profile_information"
 
 class AccountsSearch(BaseModel):
     query : str = Field(min_length=1, max_length=500)
-    mode : Optional[AccountSearchMode] = AccountSearchMode.username
     max : Optional[int] = Field(50, gt=0, ls=500)
 
 class AccountSearchResponse(BaseModel):
