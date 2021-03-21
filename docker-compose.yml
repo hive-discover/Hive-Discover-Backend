@@ -5,23 +5,35 @@ services:
     ports:
       - "8888:8888"
     command: --api
+    env_file:
+      - "docker_variables.env" 
   
   categorizer:
     image: python-backend
     command: --categorizer
+    env_file:
+      - "docker_variables.env" 
   
   lang-detector:
     image: python-backend
     command: --langdetector
+    env_file:
+      - "docker_variables.env" 
 
   chain-listener:
     image: python-backend
     command: --chainlistener
+    env_file:
+      - "docker_variables.env" 
 
   feed-making:
     image: python-backend
     command: --feed
+    env_file:
+      - "docker_variables.env" 
 
   acc-analyzer:
     image: python-backend
     command: --analyze
+    env_file:
+      - "docker_variables.env" 
