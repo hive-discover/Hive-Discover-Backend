@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -9,7 +9,7 @@ sys.path.append(os.getcwd() + "/.")
 from config import *
 from agents import AccessTokenManager, AccountSearch
 
-from database import MongoDB
+from database import MongoDBAsync
 from api.models import *
 from api import search, stats, accounts
 from api.stats import add_statistic
@@ -36,25 +36,26 @@ async def root(_ = Depends(add_statistic)):
         "status" : "ok",
         "info" : "Service is running",
         "database" : {
-            "accounts" : await MongoDB.account_table.count_documents({}),
-            "posts" : await MongoDB.post_table.count_documents({}),
-            "stats" : await MongoDB.stats_table.count_documents({}),
-            "banned" : await MongoDB.banned_table.count_documents({})
+            "accounts" : await MongoDBAsync.account_table.count_documents({}),
+            "posts" : await MongoDBAsync.post_table.count_documents({}),
+            "un_categorized" : await MongoDBAsync.post_table.count_documents({"categories_doc" : None}),
+            "analyze" : await MongoDBAsync.account_table.count_documents({"loading" : {"$exists" : True}}),
+            "stats" : await MongoDBAsync.stats_table.count_documents({}),
+            "banned" : await MongoDBAsync.banned_table.count_documents({})
             }
-        }
+        } 
 
-
+ 
 #   *** Managing ***
 
 @app.on_event("startup")
 async def on_startup():
     '''Init everything when Server is starting'''
-    MongoDB.init_global(post_table=True, account_table=True, banned_table=True, stats_table=True)
+    MongoDBAsync.init_global(post_table=True, account_table=True, banned_table=True, stats_table=True)
     AccountSearch.init()
-    Thread(target=AccountSearch.create_search_index, name="Account Indexer", daemon=True).start()
+    #Thread(target=AccountSearch.create_search_index, name="Account Indexer", daemon=True).start()
     AccessTokenManager.init()
     Thread(target=AccessTokenManager.run, name="AccessToken Manager", daemon=True).start()
-
 
 
 
