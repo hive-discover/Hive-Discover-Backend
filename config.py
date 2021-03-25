@@ -1,7 +1,9 @@
+HOST_IP = "0.0.0.0"
+HOST_PORT = 8888
 
 WORD2VEC_MODEL_PATH = "data/word2vec.gen"
 FASTTEXT_MODEL_PATH = "data/fasttext/fasttext_gensim.model"
-TEXTCNN_MODEL_PATH = "data/fasttext/TextCNN.pt"
+TEXTCNN_MODEL_PATH = "data/fasttext/TextCNN_best.pt"
 LANG_FASTTEXT_MODEL = "data/fasttext-lang.ftz"
 
 MIN_KNOWN_WORDS = 8
@@ -9,35 +11,51 @@ MIN_KNOWN_WORDS = 8
 MAX_SEARCH_INDEX_DELTA = 60 * 60 # in seconds = 1 hour
 
 # Database (MongoDB)
-DATABASE_HOST = "192.168.178.13"
-DATABASE_PORT = 27017
-DATABASE_NAME = "hive-discover"
+import os
+if os.environ.get("MongoDB_Host", None) == None:
+    # Env's not set --> load from .env file
+    from dotenv import load_dotenv, find_dotenv
+    from pathlib import Path
+    env_file = find_dotenv(Path("Hive_Discover_API/docker_variables.env"))
+    load_dotenv(env_file, verbose=True)
+    print(f"Loaded ENV-Variables from: {env_file}")
+    del env_file
+
+DATABASE_HOST = os.environ.get("MongoDB_Host", None)
+DATABASE_PORT = int(os.environ.get("MongoDB_Port", 27017))
+DATABASE_NAME = os.environ.get("MongoDB_Name", None)
+DATABASE_USER = os.environ.get("MongoDB_User", None)
+DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
+print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
 
 # Profiler
-ACCOUNT_MAX_VOTES = 50
-ACCOUNT_MAX_POSTS = 50
+ACCOUNT_MAX_VOTES = 1000
+ACCOUNT_MAX_POSTS = 1000
 ACCOUNT_MAX_FEED_LEN = 30
+ACCOUNT_MIN_FEED_LEN = 100
 
 # Tasks
 MAX_RUNNING_TASKS = 20
 
-
+FREQUENZY_CHARACTERS = [c for c in "abcdefghijklmnopqrstuvwxyz.-_0123456789"]
 
 class statics:
     OPEN_TASKS = []
     THREADS_RUNNING = []
     
-    POST_SEARCH_AGENT = None # agents.PostSearcher
     POSTS_CATEGORY = None # agents.PostsCategory
     POSTS_MANAGER = None # hive.PostsManager
     ACCOUNTS_MANAGER = None # hive.AccountsManager
     ACCOUNTS_SEARCHER = None # agents.AccountsSearcher
     LANG_DETECTOR = None # network.LangDetector
+    ACCESS_TOKEN_MANAGER = None # agents.AccessTokenManager
 
     WORD2VEC_MODEL = None
     FASTTEXT_MODEL = None # KeyedVectors
     TEXTCNN_MODEL = None 
     LEMMATIZER = None
+
+    STATISTIC_AGENT = None # agents.Statistics
 
 
 
