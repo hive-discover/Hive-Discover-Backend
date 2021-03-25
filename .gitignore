@@ -8,3 +8,7 @@
 *.bin
 *.pt
 *.gen
+*.env
+*.pub
+*/__pycache__/*
+
