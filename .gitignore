@@ -1,5 +1,4 @@
 *.ipynb
-.vscode/*
 *.pycache
 *.pyc
 *.npy
@@ -10,5 +9,7 @@
 *.gen
 *.env
 *.pub
-*/__pycache__/*
-
+testing_it.py
+**/.vscode/
+**/__pycache__/
+**/node_modules/

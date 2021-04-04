@@ -1,8 +1,6 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-
-from datetime import datetime
 from threading import Thread
 import sys, os
 sys.path.append(os.getcwd() + "/.")
@@ -13,7 +11,7 @@ from database import MongoDBAsync
 from api.models import *
 from api import search, stats, accounts
 from api.stats import add_statistic
-
+ 
 # Create App, add CORS and Routers
 app = FastAPI()#redoc_url=None, docs_url=None)
 app.add_middleware(
@@ -27,8 +25,8 @@ app.include_router(search.router, prefix="/search", tags=["Searching"])
 app.include_router(stats.router, prefix="/stats", tags=["Statistics"])
 app.include_router(accounts.router, prefix="/accounts", tags=["Accounts"])
 
-
-#   *** Endpoints ***
+  
+#   *** Endpoints *** 
 
 @app.get("/")
 async def root(_ = Depends(add_statistic)):
@@ -36,15 +34,15 @@ async def root(_ = Depends(add_statistic)):
         "status" : "ok",
         "info" : "Service is running",
         "database" : {
-            "accounts" : await MongoDBAsync.account_table.count_documents({}),
-            "posts" : await MongoDBAsync.post_table.count_documents({}),
-            "un_categorized" : await MongoDBAsync.post_table.count_documents({"categories_doc" : None}),
-            "analyze" : await MongoDBAsync.account_table.count_documents({"loading" : {"$exists" : True}}),
+            "accounts" : await MongoDBAsync.account_info.count_documents({}),
+            "posts" : await MongoDBAsync.post_info.count_documents({}),
+            "un_categorized" : await MongoDBAsync.post_data.count_documents({"categories" : None}),
+            "analyze" : await MongoDBAsync.account_data.count_documents({}),
             "stats" : await MongoDBAsync.stats_table.count_documents({}),
-            "banned" : await MongoDBAsync.banned_table.count_documents({})
+            "banned" : await MongoDBAsync.banned.count_documents({})
             }
         } 
-
+ 
  
 #   *** Managing ***
 
@@ -62,7 +60,7 @@ async def on_startup():
 async def on_shutdown():
     '''Stops everything'''
     pass
-
+ 
 
 def start_server():
     import uvicorn

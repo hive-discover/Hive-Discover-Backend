@@ -1,12 +1,10 @@
 from config import *
+import os
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
-import fasttext
-
-import os
 
 EMBEDDING_DIM = 300
 WINDOW_SIZES = (1, 2, 3, 5, 8)
@@ -72,6 +70,7 @@ class LangDetector():
 
         if load_model:
             # Load
+            import fasttext
             self.model = fasttext.load_model(LANG_FASTTEXT_MODEL)
 
     def predict_lang(self, text : str) -> list:

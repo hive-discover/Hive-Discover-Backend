@@ -18,3 +18,4 @@ hivesigner
 torch
 torchvision
 gensim==3.8.3
+python-dotenv

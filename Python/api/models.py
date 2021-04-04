@@ -59,10 +59,10 @@ class AccountSearchResponse(BaseModel):
 class AccountData(BaseModel):
     username : str
     status : str = "failed"
-    info : Optional[str] 
-    categories : Optional[List[LabelValueItem]]
-    language : Optional[List[LabelValueItem]]
-    loading : Optional[Dict]
+    info : Optional[str] = None 
+    categories : Optional[List[LabelValueItem]] = None
+    language : Optional[List[LabelValueItem]] = None
+    loading : Optional[Dict] = False
 
 
 #   *** Tokens ***

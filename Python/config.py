@@ -1,5 +1,5 @@
 HOST_IP = "0.0.0.0"
-HOST_PORT = 8888
+HOST_PORT = 888
 
 WORD2VEC_MODEL_PATH = "data/word2vec.gen"
 FASTTEXT_MODEL_PATH = "data/fasttext/fasttext_gensim.model"

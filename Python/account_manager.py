@@ -148,6 +148,36 @@ async def append_accounts(usernames : list, save_call = True) -> list:
             pass
     return account_ids
 
+async def get_more_accounts():
+    '''Get similar accounts'''
+    import requests, json
+
+    urls = ["https://api.openhive.network", "https://api.hive.blog"]
+    new_accs = []
+    counter = 0
+    async for account_info in MongoDBAsync.account_info.find({}).skip(7000):
+        # Prepare URL and payload
+        url = urls[0] if (counter % 2) == 0 else urls[1]
+        payload = '{"jsonrpc":"2.0", "method":"condenser_api.lookup_accounts", "params":["' + account_info["name"] + '", 100], "id":1}'
+        counter += 1
+        print("", end=f"\r Current index: {counter}. Len of new_accs: {len(new_accs)}")
+
+        # Make request and format
+        res = requests.post(url, data=payload)
+        try:
+            data = json.loads(res.text)
+        except:
+            continue
+
+        # Add to new_accs
+        if "result" in data and isinstance(data["result"], list):
+            [new_accs.append(item) for item in data["result"]]
+
+        # Enough --> Append them
+        if len(new_accs) > 2500:
+            await append_accounts(new_accs)
+            new_accs = []
+
 async def delete_accounts(accounts : list) -> bool:
     '''Delete all data by an account. accounts can be usernames or _ids. Returns if it was succesfull'''
     if len(accounts) == 0:
@@ -187,7 +217,7 @@ async def ban_accounts(accounts : list) -> bool:
 if __name__ == '__main__':
     async def do():
         MongoDBAsync.init_global(post_table=True, banned_table=True, account_table=True)
-        print(await append_accounts(["action-chain", "christopher2002"]))
+        print(await get_more_accounts())
     asyncio.run(do())
     
 
