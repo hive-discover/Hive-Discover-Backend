@@ -19,6 +19,13 @@ const CATEGORIES = [
             ['motivation', 'motivate'], ['statistics', 'stats', 'stat', 'charts']
 ]
 
+const HIVE_NODES = [
+    "https://api.hive.blog"
+]
+function getRandomNode(){
+    return "https://api.hive.blog"//HIVE_NODES[Math.floor(Math.random * HIVE_NODES.length)];
+}
+
 function getTodayTimestamp(){
     const now_date = new Date(Date.now())
     const date = ("0" + now_date.getDate()).slice(-2),
@@ -27,4 +34,4 @@ function getTodayTimestamp(){
     return date.toString() + "." + month.toString() + "." + year.toString();
 }
 
-module.exports = { CATEGORIES, getTodayTimestamp };
+module.exports = { CATEGORIES, HIVE_NODES, getRandomNode, getTodayTimestamp };

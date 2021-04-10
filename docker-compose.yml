@@ -1,0 +1,45 @@
+
+services:
+  web:
+    image: node-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    command: --api
+    env_file:
+      - "NodeJS/docker_variables.env" 
+  
+  categorizer:
+    image: python-backend
+    restart: unless-stopped
+    command: --categorizer
+    env_file:
+      - "Python/docker_variables.env" 
+  
+  lang-detector:
+    image: python-backend
+    restart: unless-stopped
+    command: --langdetector
+    env_file:
+      - "Python/docker_variables.env" 
+
+  chain-listener:
+    image: python-backend
+    restart: unless-stopped
+    command: --chainlistener
+    env_file:
+      - "Python/docker_variables.env" 
+
+  feed-making:
+    image: python-backend
+    restart: unless-stopped
+    command: --feed
+    env_file:
+      - "Python/docker_variables.env" 
+
+  acc-analyzer:
+    image: node-backend
+    restart: unless-stopped
+    command: --analyzer
+    env_file:
+      - "NodeJS/docker_variables.env" 

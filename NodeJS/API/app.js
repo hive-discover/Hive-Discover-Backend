@@ -1,6 +1,3 @@
-// First step: Loading .env
-require('dotenv').config({ path: './docker_variables.env' })
-
 //  *** Own Modules
 const hiveManager = require('./hivemanager.js')
 const mongodb = require('./database.js')
@@ -42,13 +39,15 @@ app.get('/', async (req, res) => {
 // Clustering
 const cluster = require('cluster');
 const os = require('os');
-const cpus = os.cpus().length;
+
+const worker_count = Math.min(os.cpus().length, process.env.ANALYZER_WORKERS);
 
 if(cluster.isMaster) {
-  console.log(`Taking advantage of ${cpus} CPUs`)
+  mongodb.logAppStart("api"); // Logging
+  console.log(`Taking advantage of ${worker_count} Worker`)
 
   // Fork
-  for (let i = 0; i < cpus; i++)
+  for (let i = 0; i < worker_count; i++)
     cluster.fork()
 
   console.dir(cluster.workers, {depth: 0});

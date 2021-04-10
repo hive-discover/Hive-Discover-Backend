@@ -1,8 +1,8 @@
 FROM node:14.16
 
-WORKDIR /HiveDiscoverAPI
+WORKDIR /NodeJS
 COPY ["package.json", "package-lock.json*", "./"]
 RUN npm install --production
 
 COPY . .
-CMD [ "node", "app.js" ]
+ENTRYPOINT [ "node", "app.js" ]

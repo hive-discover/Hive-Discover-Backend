@@ -59,11 +59,14 @@ def categorize_post(post : dict, TEXT_CNN : TextCNN, FASTTEXT_MODEL : KeyedVecto
 
 def remove_stop_duplicate_words(body : str) -> str:
     '''Remove all stopwords and duplicate words'''
-    filtered_words = [word for word in body.split(' ') if word not in stopwords.words("english")]
-    filtered_words = list(dict.fromkeys(filtered_words))
+    if body:
+        filtered_words = [word for word in body.split(' ') if word not in stopwords.words("english")]
+        filtered_words = list(dict.fromkeys(filtered_words))
 
-    # Return as str
-    return ' '.join(filtered_words)
+        # Return as str
+        return ' '.join(filtered_words)
+    
+    return ""
 
 def run() -> None:
     '''Main Function: Runs endless to categorize all posts'''

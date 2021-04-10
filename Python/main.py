@@ -53,35 +53,34 @@ def main():
       from posts_analyzer import categorizer
       process_templates.append((categorizer.start, "Posts Categorizer Process", True))
 
-   MongoDB.init_global(stats_table=True)
-
    # No processes are choosed
    if len(process_templates) == 0:
       print("You do not selected any mode! Please do so...")
       exit(1)
+
+   # More than one process is choosed --> could be harmful
+   if len(process_templates) > 1:
+      print("It is better to only set on mode. Else if one aborts the other continues and it will not restart")
+      print("Anyway, it is starting")
  
+   MongoDB.init_global(stats_table=True)
+   date = datetime.utcnow()
+
    # Manage multiple processes
    for target, name, daemon in process_templates:
       job = Process(target=target, name=name, daemon=daemon)
       process_running.append(job)
       job.start()
+      MongoDB.stats_table.update_one({"date" : date.strftime("%d.%m.%Y")}, {"$inc" : {f"starting.{date.hour}.{name}" : 1}}, upsert=True)
 
-   # Check that everything is running fine
-   while 1:
-      try:
-         for index, job in enumerate(process_running):
-            if not job.is_alive():
-               # Job fails --> Restart and monitor in DB
-               target, name, daemon = process_templates[index]
-               process_running[index] = Process(target=target, name=name, daemon=daemon)
-               process_running[index].start()
-
-               date = datetime.utcnow()
-               MongoDB.stats_table.update_one({"date" : date.strftime("%d.%m.%Y")}, {"$inc" : {f"fail.{date.hour}.{name}" : 1}}, upsert=True)
-
-         time.sleep(10)
-      except KeyboardInterrupt:
-         break
+   # Join process to be inside it
+   # If it fails, then Docker restarts it (if one process is only choosed)
+   # Two or more processes could result into one failed and one running
+   try:
+      for job in process_running:
+         job.join()
+   except KeyboardInterrupt:
+      print("Keyboard Interrupt. Closing...")
    
    stop_event.set()
    print("Good bye")

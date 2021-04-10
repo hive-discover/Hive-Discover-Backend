@@ -1,4 +1,5 @@
 const { MongoClient } = require("mongodb");
+const config = require("./config");
 
 // Connection Settings
 const User = process.env.MongoDB_User, Password = process.env.MongoDB_Password;
@@ -16,8 +17,6 @@ const options = {
 }
 
 var client = new MongoClient(url, options);
-
-
 
 async function connectToDB(){
     await client.connect()
@@ -43,37 +42,40 @@ async function logAppStart(app_name){
 }
 
 //  *** Find Operations ***
-async function findOneInCollection(collection_name, query){
-    database = client.db(DatabaseName);
-    const col = database.collection(collection_name);
-    const doc = await col.findOne(query)
-    return doc;
+function findOneInCollection(collection_name, query){
+    return new Promise(async (resolve) => {
+        database = client.db(DatabaseName);
+        const col = database.collection(collection_name);
+        const doc = await col.findOne(query)
+        resolve(doc);
+    })
 }
 
 function findManyInCollection(collection_name, query, options = {}){
-  return new Promise((resolve, reject) => {
-    database = client.db(DatabaseName);
-    let col = database.collection(collection_name);
-    resolve(col.find(query, options));
-  });
+    return new Promise((resolve, reject) => {
+      database = client.db(DatabaseName);
+      let col = database.collection(collection_name);
+      resolve(col.find(query, options));
+    });
+}
+  
+function countDocumentsInCollection(collection_name, query){
+    return new Promise((resolve, reject) => {
+      database = client.db(DatabaseName);
+      let col = database.collection(collection_name);
+      resolve(col.countDocuments(query));
+    });
 }
 
 function aggregateInCollection(collection_name, pipeline){
-  return new Promise((resolve, reject) => {
-    database = client.db(DatabaseName);
-    let col = database.collection(collection_name);
-    resolve(col.aggregate(pipeline));
-  });
+    return new Promise((resolve, reject) => {
+      database = client.db(DatabaseName);
+      let col = database.collection(collection_name);
+      resolve(col.aggregate(pipeline));
+    });
 }
 
-function countDocumentsInCollection(collection_name, query){
-  return new Promise((resolve, reject) => {
-    database = client.db(DatabaseName);
-    let col = database.collection(collection_name);
-    resolve(col.countDocuments(query));
-  });
-}
-
+  
 //  *** Manipulate Operations ***
 function insertOne(collection_name, document){
   return new Promise((resolve, reject) => {
@@ -106,6 +108,6 @@ function deleteMany(collection_name, query){
     resolve(col.deleteMany(query));
   });
 }
-
-
+  
+  
 module.exports = { connectToDB, logAppStart, findOneInCollection, findManyInCollection, aggregateInCollection, countDocumentsInCollection, insertOne, updateOne, updateMany, deleteMany };
