@@ -97,7 +97,7 @@ async def on_startup():
 
 def start_server():
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=FEED_API_PORT)
+    uvicorn.run(app, host="0.0.0.0", port=FEED_API_PORT)
 
 if __name__ == '__main__':
    start_server()
