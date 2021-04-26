@@ -24,16 +24,18 @@ services:
       - "Python/docker_variables.env" 
 
   chain-listener:
-    image: python-backend
+    image: node-backend
     restart: unless-stopped
     command: --chainlistener
     env_file:
-      - "Python/docker_variables.env" 
+      - "NodeJS/docker_variables.env" 
 
-  feed-making:
+  nmslib-api:
     image: python-backend
     restart: unless-stopped
-    command: --feed
+    command: --nmslib
+    ports:
+      - "4513:4513"
     env_file:
       - "Python/docker_variables.env" 
 

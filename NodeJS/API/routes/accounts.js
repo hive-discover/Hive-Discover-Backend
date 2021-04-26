@@ -3,6 +3,7 @@ const stats = require('./../stats.js')
 const hiveManager = require('./../hivemanager.js')
 const config = require('./../../config.js')
 
+const request = require('request');
 const queryParser = require('express-query-int');
 const bodyParser = require('body-parser')
 const express = require('express'),
@@ -144,7 +145,7 @@ router.get('/feed', async (req, res) => {
   await stats.addStat(req);
   const username = req.query.username, access_token = req.query.access_token;
   let amount = Math.min(parseInt(req.query.amount) || 20, 50);
-  const raw_data = req.query.raw_data;
+  const full_data = (req.query.full_data === 'true' || req.query.full_data === '0');
 
   // Validate form
   if(!username || username.length < 2 || !access_token || access_token.length < 10){
@@ -152,14 +153,19 @@ router.get('/feed', async (req, res) => {
     return;
   }
   
+
+  // Check things in Parralel
+  let access_token_task = hiveManager.checkAccessToken(username, access_token)
+  let account_info_task = mongodb.findOneInCollection("account_info", {"name" : username});
+
   // Check Access Token
-  if(!await hiveManager.checkAccessToken(username, access_token)){
+  if(!await access_token_task){
     res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
     return;
   }
 
   // Get account_info
-  let account_info = await mongodb.findOneInCollection("account_info", {"name" : username});
+  let account_info = await account_info_task;
   if(account_info == null) {
     // Not inside --> But because the AccessToken is valid, it has to be a real account
     // --> check if banned
@@ -185,52 +191,63 @@ router.get('/feed', async (req, res) => {
   }
 
   // Get account_data
-  let account_data = await mongodb.findOneInCollection("account_data", {"_id" : account_info._id})
+  let account_data = await mongodb.findOneInCollection("account_data", {"_id" : account_info._id});
   if(account_data == null){
     // If not inside --> add and make analyze request
-    account_data = {"_id" : account_info._id, analyze : true, make_feed : true, feed : []}
+    account_data = {"_id" : account_info._id, analyze : true}
     await mongodb.insertOne("account_data", account_data)
       .catch(err => {
         // Something failed
         res.send({status : "failed", msg : "The database operation returned an error", err : err}).end()
-        return;
       })
   }
 
-  // Get Feed
-  let post_objs = [], post_ids = [];
-  if(account_data.feed && account_data.feed.length > 0){
-    // Minimize if less posts available than requested
-    amount = Math.min(amount, account_data.feed.length - 1);
-    post_ids = account_data.feed.slice(0, amount);
+  // Get Feed from Python
+  let posts = await new Promise(resolve => {
+    const options = {
+      url : "http://api.hive-discover.tech:" + process.env.NMSLIB_API_Port + "/feed",
+      method : "POST",
+      body: JSON.stringify({
+        account_id : account_info._id,
+        amount : amount
+      })
+    };
 
-    // Get authorperms
-    await mongodb.findManyInCollection("post_info", {_id : {$in : post_ids}}).then(result => {
-      return new Promise(async (resolve) => {
-        for await (const post of result) 
-          post_objs.push({author : post.author, permlink : post.permlink});  
+    request(options, (error, response, body) => {
+      try{
+        body = JSON.parse(body)
 
-        resolve(); 
-      });
-    })
-  }
+        // Everything is fine
+        if(body.status === "ok")
+          resolve(body.posts);
+      }catch{
+        // Some error ==> return empty array
+        resolve([])
+      }          
+    });
+  });
 
-  // Maybe raw_data
-  if(!raw_data && post_objs.length > 0){
-    tasks = []
-    for(let i = 0; i< post_objs.length; i++) {
-      tasks.push(hiveManager.getContent(post_objs[i].author, post_objs[i].permlink));
-      await new Promise(resolve => setTimeout(() => resolve(), 50));
-    }
-    
-    for(let i = 0; i< tasks.length; i++)
-      post_objs[i] = await tasks[i];
+  // Check if full_data, else get only authorperm (Order does not matter)
+  if(full_data){
+    // Get full_data from post_raw
+    const post_raw_cursor = await mongodb.findManyInCollection("post_raw", {_id : {$in : posts}});
+    posts = []
+
+    for await(const post of post_raw_cursor) 
+      posts.push(post.raw);
       
+  } else {
+    // Get authorperms
+    const post_info_cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {projection : {_id : 1, author : 1, permlink : 1}});
+    posts = [];
+
+    for await(const post of post_info_cursor) 
+      posts.push({author : post.author, permlink : post.permlink});
   }
 
-  // Return and make_feed request
-  res.send({status : "ok", msg : "", posts : post_objs}).end()
-  await mongodb.updateOne("account_data", {_id : account_info._id}, {$set : {make_feed : true}, $pull : {feed : {$in : post_ids}}}) 
+  // Filter failed ones out and return
+  posts = posts.filter(elem => !Number.isInteger(elem));
+  res.send({status : "ok", posts : posts}).end()
 })
 
 function deleteAccount(username, access_token){

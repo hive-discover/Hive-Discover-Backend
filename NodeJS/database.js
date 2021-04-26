@@ -9,7 +9,7 @@ const options = {
     server: {    
       auto_reconnect: true,    
       socketOptions: {
-        keepAlive: 1,    
+        keepAlive: 30000,    
         connectTimeoutMS: 60000,    
         socketTimeoutMS: 60000,    
       }    
@@ -109,5 +109,44 @@ function deleteMany(collection_name, query){
   });
 }
   
+function performBulk(collection_name, bulk){
+  return new Promise((resolve, reject) => {
+    database = client.db(DatabaseName);
+    let col = database.collection(collection_name);
+    
+    resolve(col.bulkWrite(bulk));
+  });
+}
   
-module.exports = { connectToDB, logAppStart, findOneInCollection, findManyInCollection, aggregateInCollection, countDocumentsInCollection, insertOne, updateOne, updateMany, deleteMany };
+function generateUnusedID(collection_name){
+  return new Promise(async (resolve) => {
+    database = client.db(DatabaseName);
+    let col = database.collection(collection_name);
+
+    while(true){    
+      // Generate some random ids
+      let ids = [
+        Math.floor(Math.random() * 2000000000), Math.floor(Math.random() * 2000000000), Math.floor(Math.random() * 2000000000),
+        Math.floor(Math.random() * 2000000000), Math.floor(Math.random() * 2000000000), Math.floor(Math.random() * 2000000000)
+      ];
+
+      // Remove all listed
+      for await (const item of col.find({_id : {$in : ids}}, {_id : 1})) 
+        ids = ids.filter(elem => elem != item._id);
+      
+      // Finished --> found unused ID
+      if(ids.length > 0) {
+        resolve(ids[0]);
+        return;
+      }
+    }
+  })
+}
+
+module.exports = { 
+  client,
+  connectToDB, logAppStart,
+  findOneInCollection, findManyInCollection, aggregateInCollection, 
+  countDocumentsInCollection, 
+  insertOne, deleteMany, updateOne, updateMany, performBulk,
+  generateUnusedID };

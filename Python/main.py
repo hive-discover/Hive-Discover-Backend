@@ -9,7 +9,7 @@ from datetime import datetime
 parser = argparse.ArgumentParser()
 parser.add_argument("-all", "--all", help="start all processes", action="store_true")
 parser.add_argument("-api", "--api", help="start api", action="store_true")
-parser.add_argument("-f", "--feed", help="start Feed-Making Process", action="store_true")
+parser.add_argument("-nmslib", "--nmslib", help="start nmslib API", action="store_true")
 parser.add_argument("-a", "--analyze", help="start Account Analyzer", action="store_true")
 parser.add_argument("-cl", "--chainlistener", help="start Chain Listener Process", action="store_true")
 parser.add_argument("-ld", "--langdetector", help="start Lang Detector", action="store_true")
@@ -37,9 +37,9 @@ def main():
    if args.api or args.all:
       from api import app
       process_templates.append((app.start_server, "API Process", True))
-   if args.feed or args.all:
-      from account_tasks import feed_making
-      process_templates.append((feed_making.start, "Feed Maker Process", True))
+   if args.nmslib or args.all:
+      from nmslib_api.app import start_server
+      process_templates.append((start_server, "NMSLIB API Process", False))
    if args.analyze or args.all:
       from account_tasks import account_analyzer
       process_templates.append((account_analyzer.start, "Account Analyzer Process", True))

@@ -9,6 +9,7 @@ if(PROCESS_ARGS.length === 0){
     console.log("please provide only one start argument. Enter --help to get more information...")
 } else {
     // Start
+    console.log("starting: " + PROCESS_ARGS[0])
     let runner;
     switch(PROCESS_ARGS[0]){
         case "--help":
@@ -21,6 +22,9 @@ if(PROCESS_ARGS.length === 0){
             break;
         case "--analyzer":
             runner = require("./acc_analyzer/analyzer.js")
+            break;
+        case "--chainlistener":
+            runner = require("./chain_listener/listener.js")
             break;
     }
 }

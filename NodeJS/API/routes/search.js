@@ -2,6 +2,7 @@ const mongodb = require('./../database.js')
 const hiveManager = require('./../hivemanager.js')
 const stats = require('./../stats.js')
 
+const request = require('request');
 const queryParser = require('express-query-int');
 const bodyParser = require('body-parser')
 const express = require('express'),
@@ -18,195 +19,204 @@ function parseHrtimeToSeconds(hrtime) {
 router.post('/posts', async (req, res) => {
     await stats.addStat(req);
     const startTime = process.hrtime();
-    
-    // Get Search input
-    const query = req.body.query, raw_data = req.body.raw_data;
-    const amount = Math.min(parseInt(req.body.amount), 50);
-    let langs = req.body.lang;
+    let countposts_text = mongodb.countDocumentsInCollection("post_text", {});
 
-    if(query == null)
+    // Get Search input
+    const query = req.body.query, sort = req.body.sort, full_data = req.body.full_data;
+    const amount = Math.min(parseInt(req.body.amount), 250);
+
+    if(query == null || !query.text)
     {
         res.send({status : "failed", err : "Query is null"}).end()
         return;
     }
 
-    // Make search-pipeline
+    // Make query pipeline
     let pipeline = [{
         '$match': {
           '$text': {
-            '$search': query
+            '$search': query.text
           }
         }
-      }, {
-        '$lookup': {
-          'from': 'post_data', 
-          'localField': '_id', 
-          'foreignField': '_id', 
-          'as': 'post_data'
-        }
-      }, {
-        '$unwind': '$post_data'
-      }, {
-        '$project': {
-          'lang': '$post_data.lang'
-    }}]
+    }]
 
-    if(langs){
-        try{
-            langs = JSON.parse(langs)
-        } catch {}
-
-        if(langs.length > 0){
-            pipeline.push({
-                '$match': {
-                  'lang': {
-                    '$elemMatch': {
-                      'lang': {'$in' : langs}
-                    }
-                  }
-                }
-              })
-            }
+    // Query - before date
+    if(query.before_date){
+      pipeline = pipeline.concat([
+        {$match : {timestamp : {$lt : new Date(Date.parse(query.before_date))}}}
+      ])
     }
 
-    pipeline = pipeline.concat([
-        {
-            '$unset': 'lang.x'
-          }, {
-            '$sort': {
-              'score': {
-                '$meta': 'textScore'
+    // Query - after date
+    if(query.after_date){
+      pipeline = pipeline.concat([
+        {$match : {timestamp : {$gt : new Date(Date.parse(query.after_date))}}}
+      ])
+    }
+
+    // Query - lang
+    if (query.lang && Array.isArray(query.lang) && query.lang.length > 0) {
+      pipeline = pipeline.concat([
+        { $lookup: {
+            from: "post_data",
+            localField: "_id",
+            foreignField: "_id",
+            as: "post_data"
+          }
+        },
+        { $unwind: "$post_data" },
+        { $project: { lang: "$post_data.lang" } },
+        { $match: { lang: {
+              $elemMatch: {
+                lang: { $in: query.lang },
               }
             }
-          }, {
-            '$limit': amount
-          }, {
-            '$lookup': {
-              'from': 'post_info', 
-              'localField': '_id', 
-              'foreignField': '_id', 
-              'as': 'post_info'
-            }
-          }, {
-            '$unwind': '$post_info'
-          }, {
-            '$project': {
-              '_id': 1, 
-              'lang': 1, 
-              'author': '$post_info.author', 
-              'permlink': '$post_info.permlink'
-            }
           }
-    ]);
-
-    // Get posts from DB
-    const cursor = await mongodb.aggregateInCollection("post_text", pipeline);
-    let posts = []
-    await cursor.forEach(post => posts.push(post));
-      
-    // Check if raw_data
-    if(!raw_data){
-        tasks = []
-        for(let i = 0; i< posts.length; i++) {
-            tasks.push(hiveManager.getContent(posts[i].author, posts[i].permlink));
-            await new Promise(resolve => setTimeout(() => resolve(), 50));
         }
-        
-        for(let i = 0; i< tasks.length; i++) {
-            await tasks[i].then(result => {
-                if(result && result != {}){
-                    posts[i].body = result.body;
-                    posts[i].title = result.title;
-                    posts[i].url = result.url;
-                    posts[i].created = result.created;
-                    posts[i].json_metadata = result.json_metadata;
-                }
-            })
-        }
+      ]);
     }
 
-    const total = await mongodb.countDocumentsInCollection("post_text", {})
+    // Query - author
+    if (query.author && query.author.length > 2){
+      query.author = query.author.replace("@", "");
+
+      pipeline = pipeline.concat([
+        { '$lookup': {
+          'from': 'post_info', 
+          'localField': '_id', 
+          'foreignField': '_id', 
+          'as': 'post_info'
+        }
+        }, 
+        { '$unwind': '$post_info' },
+        { '$match': { 'post_info.author': query.author }
+      }]);
+    }
+
+    // Sort and Limit Operations
+    let posts = [], sort_order = "";
+    if(sort.type === "personalized" && sort.account.name && sort.account.access_token)
+    {
+      // Sort personalized 
+      let access_toke_test = hiveManager.checkAccessToken(sort.account.name, sort.account.access_token)
+
+      // Steps: sort by score, then limit to amount * 10 and then get only _id
+      pipeline = pipeline.concat([
+        { '$sort': { 
+            'score': { '$meta': 'textScore' }
+          }
+        },
+        { '$limit' : amount * 10},
+        { "$project" : {_id : 1}}
+      ]);
+
+      // Getting the ids
+      const cursor = await mongodb.aggregateInCollection("post_text", pipeline);
+      posts = await cursor.toArray();
+      posts.forEach((elem, index) => {posts[index] = elem._id});
+
+      // Send ids and account_name to Python and retrieve sorted ids
+      const dataString = JSON.stringify({
+        account_name : sort.account.name,
+        query_ids : posts
+      });
+    
+      const options = {
+        url : "http://api.hive-discover.tech:" + process.env.NMSLIB_API_Port + "/sort/personalized",
+        method : "POST",
+        body: dataString
+      };
+
+      // wait for result of access_token test
+      // If it fails it aborts here
+      if(!(await access_toke_test)){
+        res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
+        return;
+      }
+
+      // Get sorted order from Python
+      posts = await new Promise(resolve => {
+        request(options, (error, response, body) => {
+          try{
+            body = JSON.parse(body)
+            if(body.status === "ok") {
+              sort_order = "personalized";
+              resolve(body.ids);
+              return;
+            }
+
+          }catch{}    
+
+          // Fails. Return the original ids and just slice it. That is some kind of random
+          sort_order = "random";
+          resolve(posts);
+        })
+      });  
+ 
+      // Slice array (is sorted from best to baddest)
+      if(posts.length > amount)
+        posts = posts.slice(0, amount);
+    } else {
+      if(sort === "latest"){
+        // Latest
+        sort_order = "latest";
+        pipeline = pipeline.concat([{'$sort': {'timestamp': -1}}]);
+      } else if(sort === "oldest"){
+        // Oldest
+        sort_order = "oldest";
+        pipeline = pipeline.concat([{'$sort': {'timestamp': 1}}]);
+      } else {
+        // By score (default)
+        sort_order = "score";
+        pipeline = pipeline.concat([{
+            '$sort': { 'score': { '$meta': 'textScore' } }
+          }]);
+      }
+
+      // Limit, set projection and set agg to retrieve authorperm or raw_data
+      pipeline = pipeline.concat([{'$limit': amount}, {"$project" : {_id : 1}}]);
+      const cursor = await mongodb.aggregateInCollection("post_text", pipeline);
+      posts = await cursor.toArray();
+      posts.forEach((elem, index) => {posts[index] = elem._id});
+    }
+
+    // Check if full_data, else get only authorperm
+    if(full_data){
+      // Get full_data from post_raw
+      const post_raw_cursor = await mongodb.findManyInCollection("post_raw", {_id : {$in : posts}})
+      for await(const post of post_raw_cursor) {
+        // Set on correct index
+        posts.forEach((elem, index) => {
+          if(elem === post._id){
+            posts[index] = post.raw
+          }
+        });
+      }   
+    } else {
+      // Get authorperms
+      const post_info_cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {projection : {_id : 1, author : 1, permlink : 1}})
+      for await(const post of post_info_cursor){
+        // Set on correct index
+        posts.forEach((elem, index) => {
+          if(elem === post._id){
+            posts[index] = {author : post.author, permlink : post.permlink}
+          }
+        });           
+      }
+    }
+
+    // Remove errors (when the elem is _id (a number))
+    posts = posts.filter(elem => !Number.isInteger(elem));
     const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
-    res.send({status : "ok", posts : posts, total : total, time : elapsedSeconds});
-    return;
-
-    // Make cursor and extract ids
-    cursor = await mongodb.findManyInCollection("post_text", {$text : {$search : query}})
-    cursor.sort({ score: { $meta: "textScore"}, timestamp : -1}).limit(amount);
-    let post_objs = [];
-    for await (const post of cursor)
-        post_objs.push(post._id);  
-
-    // Get langs
-    const get_langs_task = new Promise(async (resolve) => {
-        let post_langs = [];
-        await mongodb.findManyInCollection("post_data", {_id : {$in : post_objs}}).then(async (result) => {
-            for await (const post of result) {
-                // Reshape lang array and push (order does not matter)
-                let lang = [];
-                for(let i=0; i < post.lang.length; i++)
-                    lang.push(post.lang[i].lang);
-                    
-                post_langs.push({_id : post._id, lang : lang});      
-            }
-        });
-        resolve(post_langs);
-    })
-
-    // Get authorperms
-    await mongodb.findManyInCollection("post_info", {_id : {$in : post_objs}}).then(result => {
-        return new Promise(async (resolve) => {
-            // Iterate through IDs
-            for await (const post of result) {
-                for (var i = 0; i < post_objs.length; i++){
-                    // Set in right sport
-                    if(post_objs[i] == post._id)
-                        post_objs[i] = {author : post.author, permlink : post.permlink, _id : post._id};  
-                }
-            }
-        
-            resolve(); 
-        });
-    });
-
-    // Get posts
-    if(!raw_data){
-        tasks = []
-        for(let i = 0; i< post_objs.length; i++) {
-        tasks.push(hiveManager.getContent(post_objs[i].author, post_objs[i].permlink));
-            await new Promise(resolve => setTimeout(() => resolve(), 50));
-        }
-        
-        for(let i = 0; i< tasks.length; i++) {
-            let result = await tasks[i];
-            result._id = post_objs[i]._id;
-            post_objs[i] = result;
-        }
-    }
-
-    // Combine post_objs with langs
-    await get_langs_task.then(post_langs => {
-        for(let i=0; i < post_langs.length; i++){
-            // Find right post and set lang
-            for (let j = 0; j < post_objs.length; j++){
-                // Set in right sport
-                if(post_langs[i]._id == post_objs[j]._id)
-                    post_objs[j].lang = post_langs[i].lang;  
-            }
-        }
-    });
-
-    //const total = await mongodb.countDocumentsInCollection("post_text", {})
-    //const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
-    res.send({status : "ok", posts : post_objs, total : total, time : elapsedSeconds});
-})
+    res.send({status : "ok", posts : posts, total : await countposts_text, time : elapsedSeconds, sort_order : sort_order});
+  })
 
 router.post('/accounts', async (req, res) => {
     await stats.addStat(req);
     const startTime = process.hrtime();
 
     const query = req.body.query, raw_data = req.body.raw_data;
-    const amount = Math.min(parseInt(req.body.amount), 50);
+    const amount = Math.min(parseInt(req.body.amount), 250);
 
     if(query == null)
     {
@@ -230,5 +240,25 @@ router.post('/accounts', async (req, res) => {
     res.send({status : "ok", accounts : account_objs, total : await total, time : elapsedSeconds});
 })
 
+router.get('/lang-overview', async (req, res) => {
+  const pipeline = [ {
+            '$project': {
+              '_id': '$lang.lang'
+            }
+          }, {
+            '$unwind': {
+              'path': '$_id', 
+              'preserveNullAndEmptyArrays': true
+            }
+          }, {
+            '$group': {
+              '_id': '$_id'
+            }
+    }];
+  const cursor = await mongodb.aggregateInCollection("post_data", pipeline);
+  let langs = await cursor.toArray();
+  langs.forEach((elem, index) => langs[index] = elem._id);
+  res.send({status : "ok", langs : langs})
+})
 
 module.exports = router;

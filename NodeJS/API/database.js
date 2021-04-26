@@ -1,4 +1,5 @@
 const { MongoClient } = require("mongodb");
+const config = require("../config.js")
 
 // Connection Settings
 const User = process.env.MongoDB_User, Password = process.env.MongoDB_Password;

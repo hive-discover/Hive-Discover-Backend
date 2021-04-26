@@ -16,7 +16,7 @@ if os.environ.get("MongoDB_Host", None) == None:
     # Env's not set --> load from .env file
     from dotenv import load_dotenv, find_dotenv
     from pathlib import Path
-    env_file = find_dotenv(Path("Hive_Discover_API/docker_variables.env"))
+    env_file = find_dotenv(Path("Python/docker_variables.env"))
     load_dotenv(env_file, verbose=True)
     print(f"Loaded ENV-Variables from: {env_file}")
     del env_file
@@ -26,6 +26,7 @@ DATABASE_PORT = int(os.environ.get("MongoDB_Port", 27017))
 DATABASE_NAME = os.environ.get("MongoDB_Name", None)
 DATABASE_USER = os.environ.get("MongoDB_User", None)
 DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
+FEED_API_PORT = int(os.environ.get("NMSLIB_API_Port", -1))
 print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
 
 # Profiler

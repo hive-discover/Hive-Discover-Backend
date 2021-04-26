@@ -20,10 +20,19 @@ const CATEGORIES = [
 ]
 
 const HIVE_NODES = [
-    "https://api.hive.blog"
+    "https://api.hive.blog",
+    "https://api.deathwing.me",
+    "https://hive-api.arcange.eu",
+    "https://hived.emre.sh",
+    "https://api.openhive.network",
+    "https://rpc.ausbit.dev",
+    "https://hived.privex.io",
+    "https://api.hivekings.com",
+    "https://hive.roelandp.nl",
+    "https://api.pharesim.me"
 ]
 function getRandomNode(){
-    return "https://api.hive.blog"//HIVE_NODES[Math.floor(Math.random * HIVE_NODES.length)];
+    return HIVE_NODES[Math.floor(Math.random() * HIVE_NODES.length)];
 }
 
 function getTodayTimestamp(){
@@ -34,4 +43,48 @@ function getTodayTimestamp(){
     return date.toString() + "." + month.toString() + "." + year.toString();
 }
 
-module.exports = { CATEGORIES, HIVE_NODES, getRandomNode, getTodayTimestamp };
+
+function slugifyText(text) {
+    text = text.toString().toLowerCase().trim();
+
+    const sets = [
+        {to: 'a', from: '[ÀÁÂÃÄÅÆĀĂĄẠẢẤẦẨẪẬẮẰẲẴẶἀ]'},
+        {to: 'c', from: '[ÇĆĈČ]'},
+        {to: 'd', from: '[ÐĎĐÞ]'},
+        {to: 'e', from: '[ÈÉÊËĒĔĖĘĚẸẺẼẾỀỂỄỆ]'},
+        {to: 'g', from: '[ĜĞĢǴ]'},
+        {to: 'h', from: '[ĤḦ]'},
+        {to: 'i', from: '[ÌÍÎÏĨĪĮİỈỊ]'},
+        {to: 'j', from: '[Ĵ]'},
+        {to: 'ij', from: '[Ĳ]'},
+        {to: 'k', from: '[Ķ]'},
+        {to: 'l', from: '[ĹĻĽŁ]'},
+        {to: 'm', from: '[Ḿ]'},
+        {to: 'n', from: '[ÑŃŅŇ]'},
+        {to: 'o', from: '[ÒÓÔÕÖØŌŎŐỌỎỐỒỔỖỘỚỜỞỠỢǪǬƠ]'},
+        {to: 'oe', from: '[Œ]'},
+        {to: 'p', from: '[ṕ]'},
+        {to: 'r', from: '[ŔŖŘ]'},
+        {to: 's', from: '[ßŚŜŞŠȘ]'},
+        {to: 't', from: '[ŢŤ]'},
+        {to: 'u', from: '[ÙÚÛÜŨŪŬŮŰŲỤỦỨỪỬỮỰƯ]'},
+        {to: 'w', from: '[ẂŴẀẄ]'},
+        {to: 'x', from: '[ẍ]'},
+        {to: 'y', from: '[ÝŶŸỲỴỶỸ]'},
+        {to: 'z', from: '[ŹŻŽ]'},
+        {to: '-', from: '[·/_,:;\']'}
+    ];
+
+    sets.forEach(set => {
+        text = text.replace(new RegExp(set.from,'gi'), set.to)
+    });
+
+    return text
+        .replace(/[\u0250-\ue007]/g, '') // Remove all non-latin symbols
+        .replace(/--+/g, '-')    // Replace multiple - with single -
+        .replace(/^-+/, '')      // Trim - from start of text
+        .replace(/-+$/, '')      // Trim - from end of text       
+}
+
+
+module.exports = { CATEGORIES, HIVE_NODES, getRandomNode, getTodayTimestamp, slugifyText };

@@ -98,10 +98,12 @@ def run() -> None:
 
         for p in posts:
             cats = categorize_post(p, TEXT_CNN, FASTTEXT_MODEL, LMZT)
-            new_body = remove_stop_duplicate_words(p["body"])
-            new_title = remove_stop_duplicate_words(p["title"])
             bulk_updates_data.append(UpdateMany({"_id" : p["_id"]}, {"$set" : {"categories" : cats}}))
-            bulk_updates_text.append(UpdateMany({"_id" : p["_id"]}, {"$set" : {"body" : new_body, "title" : new_title}}))
+
+            if "body" in p and "title" in p:
+                new_body = remove_stop_duplicate_words(p["body"])
+                new_title = remove_stop_duplicate_words(p["title"])
+                bulk_updates_text.append(UpdateMany({"_id" : p["_id"]}, {"$set" : {"body" : new_body, "title" : new_title}}))
         
         # Do changes
         if len(bulk_updates_data) > 0:
@@ -115,7 +117,8 @@ def run() -> None:
             except BulkWriteError:
                 pass
 
-        # Reset        
+        # Reset 
+        print(f"Updated: {len(posts)}")       
         posts, bulk_updates_data, bulk_updates_text = [], [], []
         time.sleep(0.1)
 

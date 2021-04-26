@@ -2,6 +2,7 @@ const hivejs = require('@hivechain/hivejs')
 const MarkdownIt = require('markdown-it')
 const md = new MarkdownIt();
 const HTMLParser = require('node-html-parser');
+const config = require("../config.js")
 
 const hiveSigner = require('hivesigner')
 
@@ -22,7 +23,7 @@ function processBody(post_obj){
             {    
                 let src = imgs[i].attrs.src
                 if(!src in post_obj.json_metadata.image)
-                    post_obj.json_metadata.image.push(elem)
+                    post_obj.json_metadata.image.push(src)
             }
 
             // Reparse to get ONLY text
@@ -40,6 +41,7 @@ function processBody(post_obj){
 
 function getContent(author, permlink){
     let contentgetter = new Promise((resolve, reject) => {
+        hivejs.api.setOptions({ url: config.getRandomNode() });
         hivejs.api.getContent(author, permlink, (err, result) => {
             if(err){
                 resolve({});
