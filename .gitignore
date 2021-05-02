@@ -1,3 +1,5 @@
+!README.md
+
 *.ipynb
 *.pycache
 *.pyc
@@ -9,7 +11,15 @@
 *.gen
 *.env
 *.pub
+
 testing_it.py
+CMakeSettings.json
+
 **/.vscode/
 **/__pycache__/
 **/node_modules/
+
+**/.vs/
+**/CPP/out/
+**/Simple-Web-Server/
+**/hnswlib/
