@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <random>
 #include <string>
+#include <map>
+#include <set>
 #include <unordered_set>
 
 #include <vector>
@@ -72,7 +75,7 @@ hnswlib::AlgorithmInterface<float>* createPostIndex(mongocxx::v_noabi::pool::ent
 		}
 
 		++counter;
-		if (counter > 10)
+		if (counter > 1000)
 			break;
 	}
 
@@ -131,89 +134,161 @@ std::vector<std::vector<int>> findSimilarPostsByCategory(std::vector<std::vector
 	return result;
 }
 
+void addLang(const bsoncxx::document::element& docLang, std::map<std::string, float>& langs, const double factor = 1) {
+	if (docLang.type() == type::k_array) {
+		for (const bsoncxx::array::element& langItem : docLang.get_array().value) {
+			const bsoncxx::document::element itemScore = langItem["x"];
+			const bsoncxx::document::element itemLang = langItem["lang"];
 
+			if (itemScore.type() == type::k_double && itemLang.type() == type::k_utf8) {
+				// Check if already inside and just add / Else set it
+				const std::string currentLang = itemLang.get_utf8().value.to_string();
 
-ptree getFeed(const int accountId, const std::string accountName, const size_t amount, mongocxx::pool& pool) {
-	ptree rootTree, resultTree;
-	bsoncxx::builder::basic::array accLangs{};// , votes{}, ownPosts{};
-	std::unordered_set<int> feedItems(amount), accVotes{}, accPosts{};
+				if (langs.count(currentLang))
+					langs[currentLang] += itemScore.get_double().value * factor;
+				else
+					langs[currentLang] = itemScore.get_double().value * factor;
+			}
+		}
+	}
+}
 
-	std::thread activitiesGetter([accountId, accountName, &accLangs, &accVotes, &accPosts, &pool] {
-		std::unordered_set<std::pair<std::string, double>> langs{};
+ptree getFeed(const int accountId, const std::string accountName, const int amount, mongocxx::pool& pool, const int abstractionValue = 0) {
+	bsoncxx::builder::basic::array accLangs{};
+	std::set<int> accVotes, accPosts, accActivities, feedItems;
+	bool getterFinished = false;
+
+	std::thread activitiesGetter([accountId, accountName, &accLangs, &accVotes, &accPosts, &accActivities, &pool, &getterFinished] {
+		std::map<std::string, float> langs;
 
 		// Gather Post IDs and Langs
-		std::thread postGetter([accountName, &accPosts, &langs, &pool] {
+		std::thread postGetter([accountName, &accPosts, &accActivities, &langs, &pool] {
 			auto client = pool.acquire();
 			auto coll = (*client)["hive-discover"]["post_info"];
 
 			// Find Ids
+			bsoncxx::builder::basic::array postIDs;
 			for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("author", accountName)))) {
 				const bsoncxx::document::element elemId = doc["_id"];
 
-				if (elemId.type() == type::k_int32)
-					accPosts.insert(elemId.get_int32().value);
+				if (elemId.type() == type::k_int32) {
+					const int _id = elemId.get_int32().value;
+					postIDs.append(_id);
+					accPosts.insert(_id);
+					accActivities.insert(_id);
+				}				
 			}
 
-			//TODO: find langs
+			// Gather Langs from post_data  accPosts
+			coll = (*client)["hive-discover"]["post_data"];
+			for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("_id", make_document(kvp("$in", postIDs))))))
+				addLang(doc["lang"], langs, 2);
 		});
 
-		// Gather Post IDs and Langs
-		std::thread votesGetter([accountId, &accVotes, &langs, &pool] {
+		// Gather Votes IDs and Langs
+		std::thread votesGetter([accountId, &accVotes, &accActivities, &langs, &pool] {
 			auto client = pool.acquire();
 			auto coll = (*client)["hive-discover"]["post_data"];
 
 			for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("votes", accountId)))) {
-				const bsoncxx::document::element elemId = doc["_id"];
-				const bsoncxx::document::element elemLang = doc["lang"];
-				
+				// Append _id and langs
+				const bsoncxx::document::element elemId = doc["_id"];	
+				addLang(doc["lang"], langs, 1);
 
-				if (elemId.type() == type::k_int32)
+				if (elemId.type() == type::k_int32) {
 					accVotes.insert(elemId.get_int32().value);
-
-				if (elemLang.type() == type::k_array) {
-					const bsoncxx::array::view postLangs{ elemLang.get_array().value };
-
-					for (const bsoncxx::array::element& langItem : postLangs) {
-						const bsoncxx::document::element itemScore = langItem["x"];
-						const bsoncxx::document::element itemLang = langItem["lang"];
-
-						//if (itemScore.type() == type::k_double && itemLang.type() == type::k_utf8)
-							//langs.insert(std::make_pair<std::string, double>(itemLang.get_utf8().value, itemScore.get_double().value));
-					} 
-				} 					
+					accActivities.insert(elemId.get_int32().value);
+				}				
 			}
-			});
+		});
 
+		// Wait for both
 		votesGetter.join();
 		postGetter.join();
+
+		// Lang Post-Processing:
+		// Calc Total, then Percentages and when they got more than 15% --> add to bson::array
+		float totalScore = 0; 
+		for (const auto& langItem : langs)
+			totalScore += langItem.second;
+		for (const auto& langItem : langs) {
+			if((langItem.second / totalScore) > 0.15)
+				accLangs.append(langItem.first);
+		}
+
+		getterFinished = true;
 	});
 
-	rootTree.put("status", "ok");
-	// Test with randoms
 	auto client = pool.acquire();
 	auto coll = (*client)["hive-discover"]["post_data"];
 
-	std::vector<std::vector<float>> posts;
-	mongocxx::cursor cursor = coll.find({});
-	for (const bsoncxx::document::view& doc : cursor) {
-		const bsoncxx::document::element elemCategory = doc["categories"];
-		const bsoncxx::document::element elemId = doc["_id"];
+	// Find similar Posts while:
+	// 1. Getter Thread has not finished
+	//	OR
+	// 2. feedItems is not full AND some Votes/Posts are available	(else it will never find anything similar)
+	//  OR
+	// 3. loopIndex >= 1000 (nothing can be found)
+	unsigned int loopIndex = 0;
+	bsoncxx::v_noabi::document::view_or_value findQuery;
+	bsoncxx::builder::basic::array choosedIds;
+	std::vector<std::vector<float>> choosedPosts;
+	std::vector<std::vector<int>> similarIds;
+	while (1) {
+		while (!getterFinished && accVotes.size() == 0 && accPosts.size() == 0)
+			std::this_thread::sleep_for(std::chrono::nanoseconds(250));
 
-		std::vector<float> p;
-		for (const auto& x : elemCategory.get_array().value)
-			p.push_back(x.get_double().value);
-		posts.push_back(p);
+		if (feedItems.size() >= amount || (accVotes.size() == 0 && accPosts.size() == 0))
+			break; // enough Posts or GetterThread has finished; but no Posts/Votes are available
 
-		if(posts.size() > 5)
-			break;
+		// Get some randoms
+		choosedIds = {};
+		std::set<unsigned long long> randomIndexes = { accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand() };
+		size_t currentIndex = 0;
+		for (const auto& elem : accActivities) {
+			if (randomIndexes.count(currentIndex))
+				choosedIds.append(elem);
+			++currentIndex;
+		}
+			
+
+		findQuery = make_document(kvp("_id", make_document(kvp("$in", choosedIds))));
+
+		// Get categories from randoms
+		choosedPosts = {};
+		for (const auto& doc : coll.find(findQuery)) {
+			const bsoncxx::document::element elemCategory = doc["categories"];
+
+			if (elemCategory.type() == type::k_array) {
+				const bsoncxx::array::view category{ elemCategory.get_array().value };
+				std::vector<float> data(46);
+				int dataIndex = 46;
+
+				for (; dataIndex; --dataIndex)
+					data[dataIndex - 1] = category[dataIndex - 1].get_double().value;
+				choosedPosts.push_back(data);
+			}
+		}
+
+		// Find similars and remove known ones (his Votes/Posts)
+		// K gets increased by every Iteration to find surely something
+		similarIds = findSimilarPostsByCategory(choosedPosts, (7 + loopIndex + abstractionValue));
+		for (const auto& IdsPerPost : similarIds) {
+			// Iterate over every similar Id per Post
+			for (const int& sId : IdsPerPost) {
+				if (!feedItems.count(sId) && !accPosts.count(sId) && !accVotes.count(sId))
+					feedItems.insert(sId); 
+			}		
+		}
+
+		// TODO: Check langs
+
+		++loopIndex;
 	}
 
-	for (const std::vector<int>& simForPost : findSimilarPostsByCategory(posts)) {
-		for (const int& simID : simForPost) {
-			feedItems.insert(simID);
-		}			
-	}
 
+	// Got everything --> make ptree response
+	ptree rootTree, resultTree;
+	rootTree.put("status", "ok");
 	for (const int& simID : feedItems)
 	{
 		ptree elem;
@@ -222,7 +297,7 @@ ptree getFeed(const int accountId, const std::string accountName, const size_t a
 	}
 	rootTree.add_child("result", resultTree);
 
-	activitiesGetter.join();
+	activitiesGetter.detach();
 	return rootTree;
 }
 
