@@ -33,7 +33,12 @@ using bsoncxx::builder::basic::make_array;
 
 hnswlib::AlgorithmInterface<float>* postIndex = NULL;
 
-// Method to create the index
+
+/// <summary>
+/// Method to create the Post-Index with all Posts within the last 10 days
+/// </summary>
+/// <param name="client">MongoCxx-Driver Client. This object is not thread-safe! Do not run this Method in anotehr thread than the client is created!</param>
+/// <returns>Calculated Knn-Index</returns>
 hnswlib::AlgorithmInterface<float>* createPostIndex(mongocxx::v_noabi::pool::entry client) {
 	// Get Client from Pool
 	auto coll = (*client)["hive-discover"]["post_data"];
@@ -50,7 +55,6 @@ hnswlib::AlgorithmInterface<float>* createPostIndex(mongocxx::v_noabi::pool::ent
 
 	
 	int counter = 0;
-	auto targetIds = bsoncxx::builder::basic::array{};
 
 	auto cursor = coll.find(findQuery);
 	for (const bsoncxx::document::view& doc : cursor) {
@@ -69,25 +73,28 @@ hnswlib::AlgorithmInterface<float>* createPostIndex(mongocxx::v_noabi::pool::ent
 				}
 			}
 
-			targetIds.append(elemId.get_int32().value);
+			//targetIds.append(elemId.get_int32().value);
 			hnswlib::labeltype _id = elemId.get_int32().value;
 			currentIndex->addPoint(data.data(), _id);
-		}
 
-		++counter;
-		if (counter > 1000)
-			break;
+			++counter;
+			if (counter > 250)
+				break;
+		}
 	}
 
 	std::cout << "Created PostIndex! Max elements: " << maxElements << std::endl;
 	return currentIndex;
 }
 
-// Endless Thread to periodically create an Index
+/// <summary>
+/// Endless Thread to periodically create a Post-Index
+/// </summary>
+/// <param name="parameter">std::pair of the MongoCxx-Pool (Thread-Safety) and a bool</param>
 void manageIndex(std::pair<mongocxx::pool&, bool> parameter) {
 	mongocxx::pool& pool = parameter.first;
 	bool exitCmd = parameter.second;
-	
+
 	while (!exitCmd) {
 		hnswlib::AlgorithmInterface<float>* currentIndex = createPostIndex(pool.acquire());
 		delete postIndex;
@@ -106,10 +113,10 @@ void manageIndex(std::pair<mongocxx::pool&, bool> parameter) {
 /// <returns>List of similar Ids per Posts</returns>
 std::vector<std::vector<int>> findSimilarPostsByCategory(std::vector<std::vector<float>> posts, const size_t k = 25) {
 	if (postIndex == NULL)
-		return std::vector<std::vector<int>>(0);
+		return std::vector<std::vector<int>>{};
 
-	int resultIndex = 0;
-	std::vector<std::vector<int>> result(posts.size());
+	std::vector<std::vector<int>> result{};
+	result.reserve(posts.size());
 	for (const std::vector<float>& data : posts) {
 		// Find similar per Post and set it at the correct index
 		auto gd = postIndex->searchKnn(data.data(), k);
@@ -127,177 +134,279 @@ std::vector<std::vector<int>> findSimilarPostsByCategory(std::vector<std::vector
 			--gdIndex;
 		}
 
-		result[resultIndex] = postResult;
-		++resultIndex;
+		result.push_back(postResult);
 	}
 	
 	return result;
 }
 
-void addLang(const bsoncxx::document::element& docLang, std::map<std::string, float>& langs, const double factor = 1) {
-	if (docLang.type() == type::k_array) {
-		for (const bsoncxx::array::element& langItem : docLang.get_array().value) {
-			const bsoncxx::document::element itemScore = langItem["x"];
-			const bsoncxx::document::element itemLang = langItem["lang"];
+/// <summary>
+/// Get an overview of the used langs inside the Posts. Add all lang-scores together and caluclate Percentages.
+/// Every lang over 15% is added to accLangs
+/// </summary>
+/// <param name="postIds">Which ids should be processed?</param>
+/// <param name="accLangs">Where should the Langs be inserted?</param>
+/// <param name="pool">MongoCxx-Driver Pool (Because of Thread-Safetyness)</param>
+/// <returns>std::Thread Object</returns>
+std::thread getLangsFromIds(const std::vector<int>& postIds, bsoncxx::builder::basic::array& accLangs, mongocxx::pool& pool) {
+	return std::thread([&postIds, &accLangs, &pool]{
+		// Convert vector* to bson::array
+		bsoncxx::builder::basic::array barrPostIds {};
+		for (size_t i = postIds.size(); i; --i)
+			barrPostIds.append(postIds[i - 1]);
+		
+		auto client = pool.acquire();
+		auto coll = (*client)["hive-discover"]["post_data"];
 
-			if (itemScore.type() == type::k_double && itemLang.type() == type::k_utf8) {
-				// Check if already inside and just add / Else set it
-				const std::string currentLang = itemLang.get_utf8().value.to_string();
+		// Retrieve all Langs
+		std::map<std::string, float> langs{};
+		bsoncxx::document::element elemLangs, itemScore, itemLang;
+		std::string currentLang;
+		for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("_id", make_document(kvp("$in", barrPostIds)))))) {
+			elemLangs = doc["lang"];
 
-				if (langs.count(currentLang))
-					langs[currentLang] += itemScore.get_double().value * factor;
-				else
-					langs[currentLang] = itemScore.get_double().value * factor;
+			// is array? - Yes, then iterate and process everyone
+			if (elemLangs.type() == type::k_array) {
+				for (const bsoncxx::array::element& langItem : elemLangs.get_array().value) {
+					itemScore = langItem["x"];
+					itemLang = langItem["lang"];
+
+					// are score and lang types correct? - Yes, then add it into map
+					if (itemScore.type() == type::k_double && itemLang.type() == type::k_utf8) {
+						currentLang = itemLang.get_utf8().value.to_string();
+
+						if (langs.count(currentLang))
+							langs[currentLang] += itemScore.get_double().value;
+						else
+							langs[currentLang] = itemScore.get_double().value;
+					}
+				}
 			}
 		}
-	}
-}
 
-ptree getFeed(const int accountId, const std::string accountName, const int amount, mongocxx::pool& pool, const int abstractionValue = 0) {
-	bsoncxx::builder::basic::array accLangs{};
-	std::set<int> accVotes, accPosts, accActivities, feedItems;
-	bool getterFinished = false;
-
-	std::thread activitiesGetter([accountId, accountName, &accLangs, &accVotes, &accPosts, &accActivities, &pool, &getterFinished] {
-		std::map<std::string, float> langs;
-
-		// Gather Post IDs and Langs
-		std::thread postGetter([accountName, &accPosts, &accActivities, &langs, &pool] {
-			auto client = pool.acquire();
-			auto coll = (*client)["hive-discover"]["post_info"];
-
-			// Find Ids
-			bsoncxx::builder::basic::array postIDs;
-			for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("author", accountName)))) {
-				const bsoncxx::document::element elemId = doc["_id"];
-
-				if (elemId.type() == type::k_int32) {
-					const int _id = elemId.get_int32().value;
-					postIDs.append(_id);
-					accPosts.insert(_id);
-					accActivities.insert(_id);
-				}				
-			}
-
-			// Gather Langs from post_data  accPosts
-			coll = (*client)["hive-discover"]["post_data"];
-			for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("_id", make_document(kvp("$in", postIDs))))))
-				addLang(doc["lang"], langs, 2);
-		});
-
-		// Gather Votes IDs and Langs
-		std::thread votesGetter([accountId, &accVotes, &accActivities, &langs, &pool] {
-			auto client = pool.acquire();
-			auto coll = (*client)["hive-discover"]["post_data"];
-
-			for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("votes", accountId)))) {
-				// Append _id and langs
-				const bsoncxx::document::element elemId = doc["_id"];	
-				addLang(doc["lang"], langs, 1);
-
-				if (elemId.type() == type::k_int32) {
-					accVotes.insert(elemId.get_int32().value);
-					accActivities.insert(elemId.get_int32().value);
-				}				
-			}
-		});
-
-		// Wait for both
-		votesGetter.join();
-		postGetter.join();
-
-		// Lang Post-Processing:
-		// Calc Total, then Percentages and when they got more than 15% --> add to bson::array
+		// Calculate Percentages and then check if Lang is over 15%
 		float totalScore = 0; 
 		for (const auto& langItem : langs)
 			totalScore += langItem.second;
-		for (const auto& langItem : langs) {
-			if((langItem.second / totalScore) > 0.15)
+
+		for (const auto& langItem : langs) { 
+			if ((langItem.second / totalScore) > 0.15)
 				accLangs.append(langItem.first);
 		}
 
-		getterFinished = true;
 	});
+}
+
+/// <summary>
+/// Find all Activities by an Account: Ids of liked and self-written Posts
+/// </summary>
+/// <param name="accountId">MongoDB _id of account (to find it in the DB)</param>
+/// <param name="accountName">Username of the account</param>
+/// <param name="accActivities">Pointer to the Vector where the Ids should be inserted</param>
+/// <param name="pool">MongoCxx-Driver Pool (Because of Thread-Safetyness)</param>
+void getActivitiesFromAccount(const int accountId, const std::string& accountName, std::vector<int>* accActivities, mongocxx::pool& pool) {
+	// Post Getter
+	std::thread postGetter([&pool, &accountName, &accActivities] {
+		auto client = pool.acquire();
+		auto coll = (*client)["hive-discover"]["post_info"];
+		bsoncxx::v_noabi::document::view_or_value findQuery{ make_document(kvp("author", accountName)) };
+		
+		// First count documents to reserve memory and double the value because posts count double!
+		// + size() + 5 because the other thread could already have set it and also to have a buffer
+		accActivities->reserve(coll.count_documents(findQuery) * 2 + accActivities->size() + 5);
+
+		// Retrieve all Ids
+		bsoncxx::document::element elemId;
+		for (const bsoncxx::document::view& doc : coll.find(findQuery)) {
+			elemId = doc["_id"];
+
+			if (elemId.type() == type::k_int32) {
+				accActivities->push_back(elemId.get_int32().value);
+				accActivities->push_back(elemId.get_int32().value);
+			}			
+		}
+	});
+	
+	// Vote Getter
+	std::thread voteGetter([&pool, &accountId, &accActivities] {
+		auto client = pool.acquire();
+		auto coll = (*client)["hive-discover"]["post_data"];
+		bsoncxx::v_noabi::document::view_or_value findQuery{ make_document(kvp("votes", accountId)) };
+
+		// First count documents to reserve memory
+		// + size() + 5 because the other thread could already have set it and also to have a buffer
+		accActivities->reserve(coll.count_documents(findQuery) + accActivities->size() + 5);
+
+		// Retrieve all Ids
+		bsoncxx::document::element elemId;
+		for (const bsoncxx::document::view& doc : coll.find(findQuery)) {
+			elemId = doc["_id"];
+
+			if (elemId.type() == type::k_int32)
+				accActivities->push_back(elemId.get_int32().value);
+		}
+	});
+
+	// Wait for both
+	postGetter.join();
+	voteGetter.join();
+}
+
+/// <summary>
+/// 
+/// </summary>
+/// <param name="accountId"></param>
+/// <param name="accountName"></param>
+/// <param name="client"></param>
+/// <returns></returns>
+hnswlib::AlgorithmInterface<float>* createAccountIndex(const int accountId, const std::string& accountName, mongocxx::v_noabi::pool::entry client) {
+
+}
+
+
+//	*******
+//		PUBLIC AREA
+//	*******
+
+
+
+/// <summary>
+/// Generate a Feed based on the Account's activities (Posting/Voting). Also check whether the recommended Posts
+/// are written in the same Language as Posts he liked or wrote by himself.
+/// </summary>
+/// <param name="accountId">MongoDB _id of account (to find it in the DB)</param>
+/// <param name="accountName">Username of the account</param>
+/// <param name="amount">How many Posts do you want?</param>
+/// <param name="pool">MongoCxx-Driver Pool (Because of Thread-Safetyness)</param>
+/// <param name="abstractionValue">How abstract should the recommendation be? - Higher Values result into more Knn-Neighbours and so more Category-Distance between Posts</param>
+/// <returns>Returns a ptree Object of the ids (Simple JSON-Array) to add it into another ptree</returns>
+ptree getFeed(const int accountId, const std::string accountName, const int amount, mongocxx::pool& pool, const int abstractionValue = 0) {
+	// Get Account Activities (Posts and Votes) and start the Lang-Calculator
+	std::vector<int> accActivities{};
+	getActivitiesFromAccount(accountId, accountName, &accActivities, pool);
+	bsoncxx::builder::basic::array accLangs{};
+	std::thread langGetter = getLangsFromIds(accActivities, accLangs, pool);
 
 	auto client = pool.acquire();
 	auto coll = (*client)["hive-discover"]["post_data"];
 
-	// Find similar Posts while:
-	// 1. Getter Thread has not finished
-	//	OR
-	// 2. feedItems is not full AND some Votes/Posts are available	(else it will never find anything similar)
-	//  OR
-	// 3. loopIndex >= 1000 (nothing can be found)
-	unsigned int loopIndex = 0;
+	// Create Feed while:
+	//   1. feedItems isn't full
+	//   2. accActivities's size() isn't equal to 0 (higher than 0 is interpreted as true)
+	//	 3. loopIndex isn't over 1000
+	size_t loopIndex = 0;
+	std::vector<std::vector<float>> choosedPosts{};
+	std::vector<std::vector<int>> similarIds{};
+	std::set<int> feedItems{};
 	bsoncxx::v_noabi::document::view_or_value findQuery;
-	bsoncxx::builder::basic::array choosedIds;
-	std::vector<std::vector<float>> choosedPosts;
-	std::vector<std::vector<int>> similarIds;
-	while (1) {
-		while (!getterFinished && accVotes.size() == 0 && accPosts.size() == 0)
-			std::this_thread::sleep_for(std::chrono::nanoseconds(250));
+	bsoncxx::builder::basic::array choosedIds{};
+	while (feedItems.size() < amount && accActivities.size() && loopIndex <= 1000) {
+		// Get randoms (max. 50)
+		choosedIds.clear();
+		for (size_t i = std::min(rand() % accActivities.size(), 50ULL); i; --i)
+			choosedIds.append(*(accActivities.begin() + (rand() % (accActivities.size() - 1))));
 
-		if (feedItems.size() >= amount || (accVotes.size() == 0 && accPosts.size() == 0))
-			break; // enough Posts or GetterThread has finished; but no Posts/Votes are available
-
-		// Get some randoms
-		choosedIds = {};
-		std::set<unsigned long long> randomIndexes = { accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand(), accActivities.size() % rand() };
-		size_t currentIndex = 0;
-		for (const auto& elem : accActivities) {
-			if (randomIndexes.count(currentIndex))
-				choosedIds.append(elem);
-			++currentIndex;
-		}
-			
-
-		findQuery = make_document(kvp("_id", make_document(kvp("$in", choosedIds))));
-
-		// Get categories from randoms
-		choosedPosts = {};
-		for (const auto& doc : coll.find(findQuery)) {
-			const bsoncxx::document::element elemCategory = doc["categories"];
+		// Retrieve categories
+		choosedPosts.clear();
+		choosedPosts.reserve(choosedIds.view().length());
+		bsoncxx::document::element elemCategory;
+		bsoncxx::array::view category;
+		for (const bsoncxx::document::view& doc : coll.find(make_document(kvp("_id", make_document(kvp("$in", choosedIds)))))) {
+			elemCategory = doc["categories"];
 
 			if (elemCategory.type() == type::k_array) {
-				const bsoncxx::array::view category{ elemCategory.get_array().value };
-				std::vector<float> data(46);
-				int dataIndex = 46;
+				category = elemCategory.get_array().value;
+				std::vector<float> data(46);		
 
-				for (; dataIndex; --dataIndex)
+				for (size_t dataIndex = 46; dataIndex; --dataIndex)
 					data[dataIndex - 1] = category[dataIndex - 1].get_double().value;
 				choosedPosts.push_back(data);
 			}
-		}
-
-		// Find similars and remove known ones (his Votes/Posts)
-		// K gets increased by every Iteration to find surely something
-		similarIds = findSimilarPostsByCategory(choosedPosts, (7 + loopIndex + abstractionValue));
+		} 
+		
+		// Find similar and reshape to 1d
+		choosedIds.clear();
+		similarIds = findSimilarPostsByCategory(choosedPosts, (5 + loopIndex + abstractionValue));
 		for (const auto& IdsPerPost : similarIds) {
 			// Iterate over every similar Id per Post
 			for (const int& sId : IdsPerPost) {
-				if (!feedItems.count(sId) && !accPosts.count(sId) && !accVotes.count(sId))
-					feedItems.insert(sId); 
-			}		
+				if (!feedItems.count(sId))
+					choosedIds.append(sId);
+			}
+		}		
+
+		// Check langs (if some Items inside choosedIds)
+		if (choosedIds.view().length()) {
+			if (langGetter.joinable())
+				langGetter.join();
+
+			findQuery = make_document(
+				kvp("_id", make_document(
+					kvp("$in", choosedIds))
+				),
+				kvp("lang", make_document(
+					kvp("$elemMatch", make_document(
+						kvp("lang", make_document(
+							kvp("$in", accLangs)
+						))
+					))
+				))
+			);
+
+			bsoncxx::document::element elemID;
+			for (const auto& doc : coll.find(findQuery)) {
+				elemID = doc["_id"];
+
+				if (elemID.type() == type::k_int32)
+					feedItems.insert(elemID.get_int32().value);
+			}
 		}
-
-		// TODO: Check langs
-
 		++loopIndex;
 	}
+	
+	ptree resultTree{};
+	if (feedItems.size() > 0) {
+		// Select randoms and insert them into resultTree
+		std::set<size_t> usedIterators{};
+		std::set<int>::iterator it;
 
+		size_t k;
+		for (size_t i = amount; i; --i){	
+			while (1) {
+				k = (rand() % feedItems.size());
 
-	// Got everything --> make ptree response
-	ptree rootTree, resultTree;
-	rootTree.put("status", "ok");
-	for (const int& simID : feedItems)
-	{
-		ptree elem;
-		elem.put("", simID);
-		resultTree.push_back(std::make_pair("", elem));
+				if (!usedIterators.count(k)) {
+					// Got random, unsued k
+					usedIterators.insert(k); 
+
+					// Skip to Pos			
+					for (it = feedItems.begin(); k; --k)
+						++it; 
+
+				
+					// Enter random
+					ptree elem;				
+					elem.put("", *it);
+					resultTree.push_back(std::make_pair("", elem));
+					break;
+				}
+			}
+
+			
+		}
+		
 	}
-	rootTree.add_child("result", resultTree);
 
-	activitiesGetter.detach();
-	return rootTree;
+	
+	return resultTree;
 }
 
+
+ptree sortPersonalizedIds(const int accountId, const std::string accountName, const ptree ptreeIds, mongocxx::pool& pool) {
+	// Convert ptree-Array to std::vector<int>
+	std::vector<int> queryIds{};
+	for (auto pair : ptreeIds)
+		queryIds.push_back(stoi(pair.second.data()));
+	
+	return ptree{};
+}
