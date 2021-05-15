@@ -252,16 +252,6 @@ void getActivitiesFromAccount(const int accountId, const std::string& accountNam
 	voteGetter.join();
 }
 
-/// <summary>
-/// 
-/// </summary>
-/// <param name="accountId"></param>
-/// <param name="accountName"></param>
-/// <param name="client"></param>
-/// <returns></returns>
-hnswlib::AlgorithmInterface<float>* createAccountIndex(const int accountId, const std::string& accountName, mongocxx::v_noabi::pool::entry client) {
-
-}
 
 
 //	*******
@@ -401,12 +391,123 @@ ptree getFeed(const int accountId, const std::string accountName, const int amou
 	return resultTree;
 }
 
+/// <summary>
+/// Sort post_ids personalized
+/// </summary>
+/// <param name="accountId">MongoDB _id of account (to find it in the DB)</param>
+/// <param name="accountName">Username of the account</param>
+/// <param name="ptreeIds">ptree Array of Ids (From HTML Post Body)</param>
+/// <param name="pool">MongoCxx-Driver Pool (Because of Thread-Safetyness)</param>
+/// <returns>Returns a ptree Object of the ids (Simple JSON-Array) to add it into another ptree</returns>
+ptree sortPersonalizedIds(const int accountId, const std::string accountName, const ptree& ptreeIds, mongocxx::pool& pool) {
+	hnswlib::AlgorithmInterface<float>* accIndex;
+	hnswlib::L2Space space(46);
+	std::thread accIndexGetter([&accIndex, &space, &accountName, &accountId, &pool]() {
+		std::vector<int> accActivites{};
+		getActivitiesFromAccount(accountId, accountName, &accActivites, pool);
 
-ptree sortPersonalizedIds(const int accountId, const std::string accountName, const ptree ptreeIds, mongocxx::pool& pool) {
-	// Convert ptree-Array to std::vector<int>
-	std::vector<int> queryIds{};
-	for (auto pair : ptreeIds)
-		queryIds.push_back(stoi(pair.second.data()));
+		// Convert vector to bson::array
+		bsoncxx::builder::basic::array barrAccActivites{};
+		for (auto it = accActivites.begin(); it != accActivites.end(); ++it)
+			barrAccActivites.append(*it);
+
+		// Prepare Database Connection and Find-Query
+		auto client = pool.acquire();
+		auto coll = (*client)["hive-discover"]["post_data"];
+		bsoncxx::v_noabi::document::view_or_value findQuery = make_document(kvp("_id", make_document(kvp("$in", barrAccActivites))));
+
+		// Create accountIndex
+		int64_t maxElements = ceil(coll.count_documents(findQuery) * 1.075);
+		accIndex = new hnswlib::HierarchicalNSW<float>(&space, maxElements);
+
+		std::vector<float> data(46);
+		bsoncxx::document::element elemCategory, elemId;
+		bsoncxx::array::view category;
+		for (const auto& doc : coll.find(findQuery)) {
+			elemCategory = doc["categories"];
+			elemId = doc["_id"];
+
+			if (elemCategory.type() == type::k_array && elemId.type() == type::k_int32) {
+				// Convert double-bson-array to float-vector
+				size_t dataIndex = 0;
+				for (const bsoncxx::array::element& value : elemCategory.get_array().value) {
+					if (value.type() == type::k_double) {
+						data[dataIndex] = value.get_double().value;
+						++dataIndex;
+					}
+				}
+
+				hnswlib::labeltype _id = elemId.get_int32().value;
+				accIndex->addPoint(data.data(), _id);
+			}
+		}
+	});
 	
-	return ptree{};
+	// Convert ptree-array into bson::array
+	bsoncxx::builder::basic::array barrAccActivites{};
+	for (auto pair : ptreeIds)
+		barrAccActivites.append(pair.second.get_value<int>());
+
+	auto client = pool.acquire();
+	auto coll = (*client)["hive-discover"]["post_data"];
+
+	// Get categories of Ids
+	std::vector<float> data(46);
+	bsoncxx::document::element elemCategory, elemId;
+	bsoncxx::array::view category;
+	std::set<std::pair<int, std::vector<float>>> IdCategories{};
+	bsoncxx::v_noabi::document::view_or_value findQuery = make_document(kvp("_id", make_document(kvp("$in", barrAccActivites))));
+	for (const auto& doc : coll.find(findQuery)) {
+		elemCategory = doc["categories"];
+		elemId = doc["_id"];
+
+		if (elemCategory.type() == type::k_array && elemId.type() == type::k_int32) {
+			// Convert double-bson-array to float-vector
+			size_t dataIndex = 0;
+			for (const bsoncxx::array::element& value : elemCategory.get_array().value) {
+				if (value.type() == type::k_double) {
+					data[dataIndex] = value.get_double().value;
+					++dataIndex;
+				}
+			}
+			IdCategories.insert(std::pair<int, std::vector<float>>(elemId.get_int32().value, { data }));
+		}
+	}
+	
+	if (accIndexGetter.joinable()) // Wait to have the accIndex
+		accIndexGetter.join();
+
+	// Calc finally Distances
+	std::vector<std::pair<int, float>> IdDistances{};
+	IdDistances.reserve(IdCategories.size());
+
+	for (auto& pair : IdCategories) {
+		// Calc knn-distances and sum them up
+		auto gd = accIndex->searchKnn(pair.second.data(), 5);
+
+		float totalDistance = 0;
+		while (!gd.empty()) {
+			totalDistance += std::get<0>(gd.top());
+			gd.pop();
+		}
+
+		IdDistances.push_back(std::pair<int, float>(pair.first, totalDistance));
+	}	
+
+	// Sort distances by increasing order (first is the best)
+	sort(IdDistances.begin(), IdDistances.end(), 
+		[] (const std::pair<int, float>&a, const std::pair<int, float>&b) {
+		return (a.second < b.second);
+	});
+
+	// Append sorted Ids into ptree Result (first is the best)
+	ptree resultTree{};
+	for (const auto& pair : IdDistances) {
+		ptree elem;
+		elem.put("", pair.first);
+		resultTree.push_back(std::make_pair("", elem));
+	}
+
+	delete accIndex;
+	return resultTree;
 }
