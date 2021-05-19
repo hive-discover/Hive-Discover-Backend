@@ -27,12 +27,19 @@ include_directories(${LIBMONGOCXX_INCLUDE_DIR} ${LIBBSONCXX_INCLUDE_DIR})
 link_directories(${LIBMONGOCXX_INCLUDE_DIR} ${LIBBSONCXX_INCLUDE_DIR}) 
  
    
-# Project Directory
+# Project Directory 
 add_subdirectory("hnswlib")
 add_subdirectory("Simple-Web-Server") 
-add_subdirectory("Nmslib-API")
 
-add_executable(${PROJECT_NAME} "main.cpp" "main.hpp")
+add_executable(${PROJECT_NAME} 
+			"main.h"			"main.cpp" 
+			"nmslib_api.h"		"nmslib_api.cpp" 
+			"nmslib_worker.h"	"nmslib_worker.cpp"
+		)
 
-target_link_libraries(${PROJECT_NAME} Nmslib-API)
+target_link_libraries(${PROJECT_NAME} simple-web-server)
+target_link_libraries(${PROJECT_NAME} hnswlib)
+target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES})
+target_link_libraries(${PROJECT_NAME} ${LIBMONGOCXX_LIBRARIES})
+target_link_libraries(${PROJECT_NAME} ${LIBBSONCXX_LIBRARIES})
 

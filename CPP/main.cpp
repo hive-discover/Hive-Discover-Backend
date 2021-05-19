@@ -1,8 +1,8 @@
 #include <iostream>
+#include "nmslib_api.h"
 
-#include "main.hpp"
-#include "Nmslib-API/api.cpp"
+
 
 int main() {
-	return runAPI();
+	return runAPI(8585);
 }
