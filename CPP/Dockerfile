@@ -35,11 +35,18 @@ RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DLIBMONGOC_DIR=/mongo-c-driver-1.17.5 -
 RUN cmake --build .
 RUN cmake --build . --target install
 
-WORKDIR /
+# Get Boost
+RUN apt-get install -y libboost-all-dev libssl-dev
 
-# Copy and Build
+# Copy to /src
+RUN mkdir /src
+RUN mkdir /build
+WORKDIR /src
 COPY . .
-RUN cmake . -DBOOST_ROOT=/usr/local/boost_1_76_0/
+
+# Build /src to /build
+WORKDIR /build
+RUN cmake /src
 RUN make
 
 ENTRYPOINT ["./CPP"]
