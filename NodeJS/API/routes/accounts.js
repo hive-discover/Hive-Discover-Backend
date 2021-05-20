@@ -209,6 +209,8 @@ router.get('/feed', async (req, res) => {
       method : "POST",
       body: JSON.stringify({
         account_id : account_info._id,
+        account_name : account_info.name,
+        abstraction_value : 1,
         amount : amount
       })
     };
@@ -219,7 +221,7 @@ router.get('/feed', async (req, res) => {
 
         // Everything is fine
         if(body.status === "ok")
-          resolve(body.posts);
+          resolve(body.result.map((item) => {return parseInt(item)})); // Convert str-array to int-array
       }catch{
         // Some error ==> return empty array
         resolve([])

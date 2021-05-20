@@ -110,6 +110,12 @@ router.post('/posts', async (req, res) => {
         { "$project" : {_id : 1}}
       ]);
 
+      // Start to get the AcountId
+      let accountIdTask = async () => {
+        let doc = await mongodb.findOneInCollection("account_info", {name : sort.account.name});
+        return doc._id;
+      };
+
       // Getting the ids
       const cursor = await mongodb.aggregateInCollection("post_text", pipeline);
       posts = await cursor.toArray();
@@ -118,6 +124,7 @@ router.post('/posts', async (req, res) => {
       // Send ids and account_name to Python and retrieve sorted ids
       const dataString = JSON.stringify({
         account_name : sort.account.name,
+        account_id : await accountIdTask(),
         query_ids : posts
       });
     
@@ -141,11 +148,11 @@ router.post('/posts', async (req, res) => {
             body = JSON.parse(body)
             if(body.status === "ok") {
               sort_order = "personalized";
-              resolve(body.ids);
+              resolve(body.result.map((item)=>{return parseInt(item);}));
               return;
             }
-
-          }catch{}    
+          }
+          catch{}    
 
           // Fails. Return the original ids and just slice it. That is some kind of random
           sort_order = "random";
@@ -209,7 +216,7 @@ router.post('/posts', async (req, res) => {
     posts = posts.filter(elem => !Number.isInteger(elem));
     const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
     res.send({status : "ok", posts : posts, total : await countposts_text, time : elapsedSeconds, sort_order : sort_order});
-  })
+})
 
 router.post('/accounts', async (req, res) => {
     await stats.addStat(req);
