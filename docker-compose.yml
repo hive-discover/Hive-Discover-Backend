@@ -45,3 +45,10 @@ services:
     command: --analyzer
     env_file:
       - "NodeJS/docker_variables.env" 
+
+  ac-bot:
+    image: python-backend
+    restart: unless-stopped
+    command: --bot
+    env_file:
+      - "Python/docker_variables.env" 

@@ -29,6 +29,10 @@ DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
 FEED_API_PORT = int(os.environ.get("NMSLIB_API_Port", -1))
 print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
 
+# Ac-Bot
+AC_BOT_POSTING_WIF = os.environ.get("AC_BOT_POSTING_WIF", None)
+AC_BOT_VOTE_COUNT = 25
+
 # Profiler
 ACCOUNT_MAX_VOTES = 1000
 ACCOUNT_MAX_POSTS = 1000

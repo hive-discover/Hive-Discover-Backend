@@ -14,6 +14,7 @@ parser.add_argument("-a", "--analyze", help="start Account Analyzer", action="st
 parser.add_argument("-cl", "--chainlistener", help="start Chain Listener Process", action="store_true")
 parser.add_argument("-ld", "--langdetector", help="start Lang Detector", action="store_true")
 parser.add_argument("-c", "--categorizer", help="start Posts Categorizer", action="store_true")
+parser.add_argument("-b", "--bot", help="start Bot", action="store_true")
 
 
 #   ***  Available methods:
@@ -23,6 +24,7 @@ parser.add_argument("-c", "--categorizer", help="start Posts Categorizer", actio
 #   (listener.start_listener, "Chain Listener Process", True)
 #   (lang_detector.start, "Posts Lang Detector Process", True)
 #   (categorizer.start, "Posts Categorizer Process", True)
+#   (bot.start, "Bot Process", True)
 
 
 
@@ -52,6 +54,9 @@ def main():
    if args.categorizer or args.all:
       from posts_analyzer import categorizer
       process_templates.append((categorizer.start, "Posts Categorizer Process", True))
+   if args.bot or args.all:
+      from bot import ac_bot
+      process_templates.append((ac_bot.start, "Bot Process", True))
 
    # No processes are choosed
    if len(process_templates) == 0:
