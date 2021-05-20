@@ -31,13 +31,13 @@ services:
       - "NodeJS/docker_variables.env" 
 
   nmslib-api:
-    image: python-backend
+    image: cpp-backend
     restart: unless-stopped
-    command: --nmslib
+    #command: --nmslib
     ports:
-      - "4513:4513"
-    env_file:
-      - "Python/docker_variables.env" 
+      - "8585:8585"
+    #env_file:
+    #  - "Python/docker_variables.env" 
 
   acc-analyzer:
     image: node-backend
