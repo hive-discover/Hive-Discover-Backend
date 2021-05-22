@@ -134,9 +134,9 @@ router.post('/posts', async (req, res) => {
         body: dataString
       };
 
-      // wait for result of access_token test
+      // wait for result of access_token test or if it is the Test Account
       // If it fails it aborts here
-      if(!(await access_toke_test)){
+      if(!(await access_toke_test) && !hiveManager.checkIfTestAccount(sort.account.name, sort.account.access_token)){
         res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
         return;
       }

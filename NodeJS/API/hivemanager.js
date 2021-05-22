@@ -90,6 +90,10 @@ function checkAccessToken(username, access_token){
     });
 }
 
+function checkIfTestAccount(username, access_token){
+    // Check if Username and access_token is connected to the Test Account 
+    return (username === process.env.TEST_ACCOUNT_USERNAME && access_token === process.env.TEST_ACCOUNT_ACCESS_TOKEN);
+}
 
 function getAccounts(accounts){
     return new Promise(resolve => {
@@ -114,4 +118,4 @@ function getAccounts(accounts){
 }
 
 
-module.exports = { getContent, checkAccessToken, getAccounts };
+module.exports = { getContent, checkAccessToken, getAccounts, checkIfTestAccount };

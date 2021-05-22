@@ -22,8 +22,9 @@ router.get('/', async (req, res) => {
     return;
   }
   
-  // Check Access Token
-  if(!await hiveManager.checkAccessToken(username, access_token)){
+  // Check Access Token or if Test-Account
+  if(!await hiveManager.checkAccessToken(username, access_token) && !hiveManager.checkIfTestAccount(username, access_token)){
+    // Access Token is wrong and it is not the Test-Account
     res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
     return;
   }
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
 
   // Get profile ==> (categories/langs)
   const get_profile = async () => {
-    let categories = [], langs = [];
+    let categories = [], langs = [], elements = 0;
 
     // 1. Find posts with author=username
     let cursor =  (await mongodb.findManyInCollection("post_info", {author : username})).project({_id : 1});
@@ -69,6 +70,7 @@ router.get('/', async (req, res) => {
         // ==> categories & lang exist
         categories.push(post.categories);
         langs.push(post.lang);
+        elements += 1;
 
         if(account_info._id in own_post_ids){
           // Is post --> double
@@ -135,11 +137,11 @@ router.get('/', async (req, res) => {
     });
 
     // 5.: Return calculations
-    return {languages : langs, categories : categories}
+    return {languages : langs, categories : categories, elements : elements}
   }
 
   res.send({status : "ok", msg : "Account is available", loading : loading, profile : (await get_profile())}).end()
-  })
+})
 
 router.get('/feed', async (req, res) => {
   await stats.addStat(req);
@@ -158,8 +160,8 @@ router.get('/feed', async (req, res) => {
   let access_token_task = hiveManager.checkAccessToken(username, access_token)
   let account_info_task = mongodb.findOneInCollection("account_info", {"name" : username});
 
-  // Check Access Token
-  if(!await access_token_task){
+  // Check Access Token or if it is the Test Account
+  if(!await access_token_task && !hiveManager.checkIfTestAccount(username, access_token)){
     res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
     return;
   }
