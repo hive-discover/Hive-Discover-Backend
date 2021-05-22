@@ -1,3 +1,3 @@
 # Hive-Discover Backend-Code
 
-In this repo you can find anything which is relevant for our data processing at our service.
+In this repo you can find anything that happens in the background while using our Service.
