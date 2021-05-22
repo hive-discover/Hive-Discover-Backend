@@ -21,7 +21,7 @@ def vote_on_content(author : str, permlink : str) -> bool:
         "voter": "ac-bot",
         "author": author,
         "permlink": permlink,
-        "weight": int(float(1) * 100)
+        "weight": 10
     }))
 
     try:
