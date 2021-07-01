@@ -83,3 +83,8 @@ CATEGORIES = [['politic', 'politics', 'election'], ['technology', 'tech', 'techn
             ['work', 'working', 'job'],
             ['philosophy'], ['culture'], ['trading', 'stock', 'stocks', 'stockmarket'],
             ['motivation', 'motivate'], ['statistics', 'stats', 'stat', 'charts']] 
+
+
+BANNED_WORDS = [
+    "nsfw", "cross-post", "stop_discover", "sex", "porn", "xxxwoman"
+]

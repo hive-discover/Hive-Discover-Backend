@@ -127,12 +127,12 @@ async def append_posts(posts : list) -> list:
             post_ids[index] = -1
             continue
 
-        if "nsfw" in tag_str or "cross-post" in tag_str:
-            post_ids[index] = -1
-            continue
-        
-        if "stop_discover" in tag_str or "stop_discover" in post["body"]:
-            post_ids[index] = -1
+        for b_word in BANNED_WORDS:
+            if b_word in tag_str or b_word in post["body"] or b_word in post["title"]:
+                post_ids[index] = -1
+                break
+            
+        if post_ids[index] == -1:
             continue
 
         if len(body.split(' ')) < MIN_KNOWN_WORDS:
