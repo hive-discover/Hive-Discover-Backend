@@ -1,7 +1,7 @@
 pymongo
 Flask
 flask-cors
-beem==0.24.13
+beem
 spacy==3
 nmslib
 ftfy
