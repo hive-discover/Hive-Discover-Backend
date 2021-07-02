@@ -31,6 +31,11 @@ const HIVE_NODES = [
     "https://hive.roelandp.nl",
     "https://api.pharesim.me"
 ]
+
+const BANNED_WORDS = [
+    "nsfw", "cross-post", "stop_discover", "sex", "porn", "xxxwoman"
+]
+
 function getRandomNode(){
     return HIVE_NODES[Math.floor(Math.random() * HIVE_NODES.length)];
 }
@@ -87,4 +92,4 @@ function slugifyText(text) {
 }
 
 
-module.exports = { CATEGORIES, HIVE_NODES, getRandomNode, getTodayTimestamp, slugifyText };
+module.exports = { CATEGORIES, HIVE_NODES, BANNED_WORDS, getRandomNode, getTodayTimestamp, slugifyText };

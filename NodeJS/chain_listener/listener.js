@@ -110,15 +110,21 @@ function handleCommentOP(op_value){
         if(Array.isArray(op_value.json_metadata.tags))
             op_value.json_metadata.tags = op_value.json_metadata.tags.join(" ");
 
-        // Check requirements: no stopwords/tags, min len...
-        if( op_value.body.indexOf("stop_discover") >= 0 || op_value.json_metadata.tags.indexOf("stop_discover") >= 0 ||
-            op_value.body.indexOf("nsfw") >= 0 || op_value.json_metadata.tags.indexOf("nsfw") >= 0 ||
-            op_value.json_metadata.tags.indexOf("cross-post") >= 0){
-            
-            // Do not enter
-            resolve();
+        // Check banned Words
+        var isbanned = false;
+        config.BANNED_WORDS.forEach((item)=>{
+            if(
+                op_value.body.indexOf(item) >= 0 || 
+                op_value.json_metadata.tags.indexOf(item) >= 0 ||
+                op_value.title.indexOf(item) >= 0
+            ){
+                // Not enter
+                isbanned = true;
+                resolve();
+            }
+        });
+        if(isbanned)
             return;
-        }
 
         // Parse body and extract images
         let html_body = md.render(op_value.body);
