@@ -1,6 +1,7 @@
 const mongodb = require('./../database.js')
 const hiveManager = require('./../hivemanager.js')
 const stats = require('./../stats.js')
+const sortings = require("../sorting.js");
 
 const request = require('request');
 const queryParser = require('express-query-int');
@@ -97,8 +98,11 @@ router.post('/posts', async (req, res) => {
     let posts = [], sort_order = "";
     if(sort.type === "personalized" && sort.account.name && sort.account.access_token)
     {
-      // Sort personalized 
-      let access_toke_test = hiveManager.checkAccessToken(sort.account.name, sort.account.access_token)
+      if(!await hiveManager.checkAccessToken(sort.account.name, sort.account.access_token) && !hiveManager.checkIfTestAccount(sort.account.name, sort.account.access_token)){
+        // Access Token is wrong and it is not the Test-Account
+        res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
+        return;
+      }
 
       // Steps: sort by score, then limit to amount * 10 and then get only _id
       pipeline = pipeline.concat([
@@ -111,58 +115,19 @@ router.post('/posts', async (req, res) => {
       ]);
 
       // Start to get the AcountId
-      let accountIdTask = async () => {
+      let accountIdTask = new Promise(async (resolve) => {
         let doc = await mongodb.findOneInCollection("account_info", {name : sort.account.name});
-        return doc._id;
-      };
+        resolve(doc._id);
+      });
 
       // Getting the ids
       const cursor = await mongodb.aggregateInCollection("post_text", pipeline);
       posts = await cursor.toArray();
       posts.forEach((elem, index) => {posts[index] = elem._id});
 
-      // Send ids and account_name to Python and retrieve sorted ids
-      const dataString = JSON.stringify({
-        account_name : sort.account.name,
-        account_id : await accountIdTask(),
-        query_ids : posts
-      });
-    
-      const options = {
-        url : "http://api.hive-discover.tech:" + process.env.NMSLIB_API_Port + "/sort/personalized",
-        method : "POST",
-        body: dataString
-      };
+      // Sort
+      posts = await sortings.sortPersonalized(posts, sort.account.name, await accountIdTask);   
 
-      // wait for result of access_token test or if it is the Test Account
-      // If it fails it aborts here
-      if(!(await access_toke_test) && !hiveManager.checkIfTestAccount(sort.account.name, sort.account.access_token)){
-        res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
-        return;
-      }
-
-      // Get sorted order from Python
-      posts = await new Promise(resolve => {
-        request(options, (error, response, body) => {
-          try{
-            body = JSON.parse(body)
-            if(body.status === "ok") {
-              sort_order = "personalized";
-              resolve(body.result.map((item)=>{return parseInt(item);}));
-              return;
-            }
-          }
-          catch{}    
-
-          // Fails. Return the original ids and just slice it. That is some kind of random
-          sort_order = "random";
-          resolve(posts);
-        })
-      });  
- 
-      // Slice array (is sorted from best to baddest)
-      if(posts.length > amount)
-        posts = posts.slice(0, amount);
     } else {
       if(sort === "latest"){
         // Latest
@@ -186,6 +151,10 @@ router.post('/posts', async (req, res) => {
       posts = await cursor.toArray();
       posts.forEach((elem, index) => {posts[index] = elem._id});
     }
+
+    // Slice array (is sorted from best to baddest)
+    if(posts.length > amount)
+      posts = posts.slice(0, amount);
 
     // Check if full_data, else get only authorperm
     if(full_data){
