@@ -5,8 +5,6 @@ const PROCESS_ARGS = process.argv.slice(2);
 
 if(PROCESS_ARGS.length === 0){
     console.log("please provide a start argument. Enter --help to get more information...")
-} else if(PROCESS_ARGS.length !== 1){
-    console.log("please provide only one start argument. Enter --help to get more information...")
 } else {
     // Start
     console.log("starting: " + PROCESS_ARGS[0])
