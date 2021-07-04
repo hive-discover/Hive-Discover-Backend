@@ -1,4 +1,4 @@
-const mongodb = require('./../database.js')
+const mongodb = require('../../database.js')
 const hiveManager = require('./../hivemanager.js')
 const stats = require('./../stats.js')
 const sortings = require("../sorting.js");

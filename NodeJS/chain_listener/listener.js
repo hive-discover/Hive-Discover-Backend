@@ -441,16 +441,16 @@ async function main(){
 
                         switch(op_name){
                             case "vote":
-                                tasks.push(handleVoteOP(op_value))
+                                tasks.push(handleVoteOP(op_value).catch(err => console.log("Error", err)))
                                 break;
                             case "comment":
-                                tasks.push(handleCommentOP(op_value))
+                                tasks.push(handleCommentOP(op_value).catch(err => console.log("Error", err)))
                                 break;
                             case "account_update":
-                                tasks.push(handleAccountUpdateOP(op_value));
+                                tasks.push(handleAccountUpdateOP(op_value).catch(err => console.log("Error", err)));
                                 break
                             case "custom_json":
-                                tasks.push(handleCustomJson(op_value))
+                                tasks.push(handleCustomJson(op_value).catch(err => console.log("Error", err)))
                                 break;
                         }
                     }
@@ -501,12 +501,4 @@ async function main(){
 
 // Start everything
 mongodb.logAppStart("chain-listener");
-mongodb.connectToDB()
-    .then(async ()=>{
-        await repairDatabase();
-        await getStartBlockNum();
-        main();
-    })
-    .catch(err => {
-      console.error(err);
-    }) 
+repairDatabase().then(getStartBlockNum()).then(main());

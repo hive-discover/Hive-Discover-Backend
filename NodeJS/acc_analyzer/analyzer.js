@@ -223,18 +223,12 @@ if(cluster.isMaster) {
   })
 
   // Connect to DB and start Manager
-  mongodb.connectToDB()
-    .then(masterManaging)
-    .catch(err => {
-      console.error(err);
-    })
-
+  masterManaging();
   } else {
       // Connect to DB and set messaging service
-      mongodb.connectToDB()
-        .then(setUpWorker)
+        setUpWorker()
         .catch(err => {
           console.error(err);
           exit(1)
-        })     
+        });
 }

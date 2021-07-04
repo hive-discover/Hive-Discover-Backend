@@ -1,5 +1,5 @@
 const config = require("../config.js")
-const mongodb = require('./database.js')
+const mongodb = require('../database.js')
 
 var similarity = require( 'compute-cosine-similarity' );
 

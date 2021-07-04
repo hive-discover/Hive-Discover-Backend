@@ -1,6 +1,6 @@
 //  *** Own Modules
 const hiveManager = require('./hivemanager.js')
-const mongodb = require('./database.js')
+const mongodb = require('../database.js')
 
 
 //  *** Express API Handling
@@ -68,12 +68,6 @@ if(cluster.isMaster) {
 
   console.log(`Master PID: ${process.pid}`)
 } else {
-    // Connect to DB
-    mongodb.connectToDB().catch(err => {
-      console.error(err);
-      exit(0);
-    })
-
   //  Start server...
   app.listen(port, () => {
     console.log(`App listening at http://localhost:${port}`)

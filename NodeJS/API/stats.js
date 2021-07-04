@@ -1,4 +1,4 @@
-const mongodb = require('./database.js')
+const mongodb = require('../database.js')
 const config = require('./../config.js')
 
 
