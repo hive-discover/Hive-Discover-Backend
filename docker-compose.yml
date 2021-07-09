@@ -1,5 +1,12 @@
 
 services:
+  wordvec:
+    image: wordvec-api:latest
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    command: -model_filepath fasttext_gensim.model
+
   web:
     image: node-backend
     restart: unless-stopped
@@ -13,6 +20,8 @@ services:
     image: python-backend
     restart: unless-stopped
     command: --categorizer
+    depends_on:
+      - "wordvec"
     env_file:
       - "Python/docker_variables.env" 
   
@@ -33,11 +42,8 @@ services:
   nmslib-api:
     image: cpp-backend
     restart: unless-stopped
-    #command: --nmslib
     ports:
       - "8585:8585"
-    #env_file:
-    #  - "Python/docker_variables.env" 
 
   acc-analyzer:
     image: node-backend

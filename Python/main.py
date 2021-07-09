@@ -2,7 +2,6 @@ from database import MongoDB
 
 import argparse
 from multiprocessing import Process, Event
-import time
 from datetime import datetime
 
 # Arguments
@@ -52,8 +51,8 @@ def main():
       from posts_analyzer import lang_detector
       process_templates.append((lang_detector.start, "Posts Lang Detector Process", True))
    if args.categorizer or args.all:
-      from posts_analyzer import categorizer
-      process_templates.append((categorizer.start, "Posts Categorizer Process", True))
+      from posts_analyzer import async_categorizer
+      process_templates.append((async_categorizer.start, "Posts Categorizer Process", True))
    if args.bot or args.all:
       from bot import ac_bot
       process_templates.append((ac_bot.start, "Bot Process", True))

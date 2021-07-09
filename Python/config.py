@@ -6,6 +6,7 @@ FASTTEXT_MODEL_PATH = "data/fasttext/fasttext_gensim.model"
 TEXTCNN_MODEL_PATH = "data/fasttext/TextCNN_best.pt"
 LANG_FASTTEXT_MODEL = "data/fasttext-lang.ftz"
 
+
 MIN_KNOWN_WORDS = 8
 
 MAX_SEARCH_INDEX_DELTA = 60 * 60 # in seconds = 1 hour
@@ -26,7 +27,10 @@ DATABASE_PORT = int(os.environ.get("MongoDB_Port", 27017))
 DATABASE_NAME = os.environ.get("MongoDB_Name", None)
 DATABASE_USER = os.environ.get("MongoDB_User", None)
 DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
+
 FEED_API_PORT = int(os.environ.get("NMSLIB_API_Port", -1))
+WORDVEC_API_PORT = os.environ.get("WordVecApi_Port", 7879)
+
 print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
 
 # Ac-Bot

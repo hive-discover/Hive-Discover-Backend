@@ -7,6 +7,7 @@ nmslib
 ftfy
 numpy
 fasttext
+aiohttp
 nltk
 waitress
 markdown
