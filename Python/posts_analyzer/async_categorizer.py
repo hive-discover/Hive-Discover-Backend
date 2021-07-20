@@ -1,5 +1,8 @@
 import asyncio, time
 import json
+import math
+import requests
+from datetime import timezone, timedelta
 import sys, os
 sys.path.append(os.getcwd() + "/.")
 
@@ -24,7 +27,49 @@ class statics:
     LMZT : Lemmatizer = None
     Bulk_PostData_Updates : list = []
     Bulk_PostText_Updates : list = []
+    AmableDB_Inserts = []
 
+AMABLE_DB_URL = f"http://api.hive-discover.tech:{AMABLE_DB_Port}"
+
+# amableDB Operations
+async def perform_amabledb_inserts():
+    '''Insert Docs into AmableDB'''
+    if len(statics.AmableDB_Inserts) == 0:
+        return
+
+    # Prepare Request
+    posts_count = len(statics.AmableDB_Inserts)
+    payload = {"post_cats" : statics.AmableDB_Inserts}
+    statics.AmableDB_Inserts = []
+
+    # Make Create-Request
+    async with aiohttp.ClientSession(headers={'Content-Type': 'application/json'}) as session:
+        async with session.post(AMABLE_DB_URL + "/create", json=payload) as response:
+            if not response or response.status != 200:
+                print("[Failed] Cannot insert {posts_count} documents into amabledb!")
+                print(response.status)
+                print(await response.text())
+                await asyncio.sleep(5)
+                exit()
+            else:
+                print(f"[Success] entered {posts_count} posts in amableDB")
+
+    # Rebuild KNN Index
+    payload = { "catsKNN": { "collection": "post_cats", "build": True } }
+    async with aiohttp.ClientSession(headers={'Content-Type': 'application/json'}) as session:    
+        async with session.post(AMABLE_DB_URL + "/index", json=payload) as response:
+            if not response or response.status != 200:  
+                print(f"[Failed] Cannot rebuild catsKNN Index!")
+                print(response.status)
+                print(await response.text())
+                await asyncio.sleep(5)
+                exit()
+
+            response = json.loads(await response.text())
+            if "status" not in response or response["status"] != "ok":
+                print(f"[Failed] Cannot rebuild catsKNN Index!")
+                print(response)
+                await asyncio.sleep(5) # Not exit, let it run
 
 def load_models() -> None:
     '''Load TextCnn and lmtz'''
@@ -72,7 +117,7 @@ async def get_word_vectors(tok_body : list) -> list:
         # Check if the word is available as a vector
         if word in server_vectors:
             d_bytes = base64.b64decode(server_vectors[word])
-            vectors.append(np.frombuffer(d_bytes, dtype=np.float32))
+            vectors.append(np.frombuffer(d_bytes, dtype=np.float64))
 
 
     return vectors
@@ -111,6 +156,12 @@ async def process_one_post(post : dict) -> None:
         UpdateOne({"_id" : post["_id"]}, {"$set" : {"body" : remove_stopwords(tok_text)}})
     )
 
+    # amableDB Insert with TTL settings
+    sevendays_later = post["timestamp"] + timedelta(days=10)
+    sevendays_later = sevendays_later.replace(tzinfo=timezone.utc)
+    sevendays_later = math.ceil(sevendays_later.timestamp()) # seconds from 1970
+    statics.AmableDB_Inserts.append({"id" : post["_id"], "categories" : categories, "&ttl" : sevendays_later})
+
 async def run(BATCH_SIZE : int = 25) -> None:
     # Init
     nltk.download("stopwords")
@@ -147,26 +198,33 @@ async def run(BATCH_SIZE : int = 25) -> None:
         if len(tasks) > 0:
             await asyncio.wait(tasks)
 
-        # Update Bulks for post_data
-        if len(statics.Bulk_PostData_Updates) > 0:
+        # Update Bulks for post_data       
+        async def doPostDataUpdate():
+            if len(statics.Bulk_PostData_Updates) == 0:
+                return
+
             try:
                 await MongoDBAsync.post_data.bulk_write(statics.Bulk_PostData_Updates, ordered=False)
             except BulkWriteError as ex:
                 print("Error on BulkWrite for post_data:")
                 print(ex)
-            
-            statics.Bulk_PostData_Updates = []
+            statics.Bulk_PostData_Updates = []                    
 
         # Update Bulks for post_text        
-        if len(statics.Bulk_PostText_Updates) > 0:
+        async def doPostTextUpdate():
+            if len(statics.Bulk_PostText_Updates) == 0:
+                return
+
             try:
                 await MongoDBAsync.post_data.bulk_write(statics.Bulk_PostText_Updates, ordered=False)
             except BulkWriteError as ex:
                 print("Error on BulkWrite for post_text:")
                 print(ex)
-
             statics.Bulk_PostText_Updates = []
 
+        # Do all updates
+        await asyncio.wait([doPostDataUpdate(), doPostTextUpdate(), perform_amabledb_inserts()])
+            
         # Wait a bit (if tasks was not full ==> relax CPU)
         print(f"Tasks ran: {len(tasks)}")   
         if len(tasks) >= BATCH_SIZE:

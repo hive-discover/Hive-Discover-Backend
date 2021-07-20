@@ -30,6 +30,7 @@ DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
 
 FEED_API_PORT = int(os.environ.get("NMSLIB_API_Port", -1))
 WORDVEC_API_PORT = os.environ.get("WordVecApi_Port", 7879)
+AMABLE_DB_Port = os.environ.get("AmableDB_Port", 3399)
 
 print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
 
