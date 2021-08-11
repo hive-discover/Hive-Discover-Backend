@@ -1,4 +1,5 @@
 const mongodb = require('../../database.js')
+const amabledb = require('./../../amable-db.js')
 const stats = require('./../stats.js')
 const hiveManager = require('./../hivemanager.js')
 const config = require('./../../config.js')
@@ -143,11 +144,101 @@ router.get('/', async (req, res) => {
   res.send({status : "ok", msg : "Account is available", loading : loading, profile : (await get_profile())}).end()
 })
 
+async function calcFeed(account_info, account_data, amount, abstraction_value, k = 7, posts = null, acc_ids = null){
+  let tasks_count = Math.max(Math.round(amount / k), 3); // Ensure to have at least 3 tasks running
+  posts = (posts || new Set([]));
+  
+  // Find liked/own ids
+  if(acc_ids == null){
+    acc_ids = [];
+
+    await Promise.all([
+      // Account Posts
+      mongodb.findManyInCollection("post_info", {author : account_info.name}, {projection : {_id : 1}}).then(async (value) => {
+        // value == cursor
+        for await (const post of value)
+          acc_ids.push(post._id);
+      }),
+      // Account Votes
+      mongodb.findManyInCollection("post_data", {votes : account_info._id}, {projection : {_id : 1}}).then(async (value) => {
+        // value == cursor
+        for await (const post of value)
+          acc_ids.push(post._id);
+      }),
+    ]);
+  }
+
+  // Nothing to do
+  if(acc_ids.length == 0)
+    return [];
+  
+
+  // Get random (fully categorized) posts and create amable-db Bulk
+  const mongo_cursor = await mongodb.aggregateInCollection("post_data", [
+    {$match : { _id : {$in : acc_ids }, categories : {$ne : null}, categories : {$size : 46}}},
+    {$sample : {size : tasks_count} },
+    {$project : {categories : 1}}
+  ]);
+
+  let amable_bulk = [];
+  for await(const post of mongo_cursor){
+    amable_bulk.push({
+      method : "/select",
+      value : {
+        "query": {
+          "#similar": {
+            "fieldName": "categories",
+            "k": k + abstraction_value,
+            "value": post.categories
+          }
+        },
+        "projection" : {"id" : 1},
+        "collection": "post_cats"
+      }
+    });
+  }
+
+  // Perform bulk and iterate all cursors
+  const amable_cursors = await amabledb.bulk(amable_bulk);
+  let tasks = [];
+  for(const cursor of amable_cursors){
+    if(cursor.status != "ok")
+      continue;
+
+    tasks.push(new Promise(async (resolve, reject) => {
+      // Add all posts
+      for await ({item} of amabledb.getCursorItems(cursor))
+        posts.add(item.id);
+      resolve();
+    }));
+  }
+
+  // Wait for all
+  await Promise.all(tasks); 
+
+  // Convert Set to list and remove already seen ones (ids in acc_ids)
+  posts = [...posts].filter(value => {return !acc_ids.includes(value)});
+
+  // To less items 
+  if (posts.length < amount) {
+    // ==> do the same recursivly with increased k
+    // Runs until enough posts were found (k always increses)
+    return (await calcFeed(account_info, account_data, amount, abstraction_value, k + 5, new Set(posts)));
+  } 
+
+  // To many items
+  while (posts.length > amount)
+    posts.splice(Math.floor(posts.length * Math.random()), 1);
+
+  return posts;
+}
+
 router.get('/feed', async (req, res) => {
   await stats.addStat(req);
   const username = req.query.username, access_token = req.query.access_token;
   let amount = Math.min(parseInt(req.query.amount) || 20, 50);
   const full_data = (req.query.full_data === 'true' || req.query.full_data === '0');
+  const abstraction_value = parseInt(req.query.abstraction_value || 1);
 
   // Validate form
   if(!username || username.length < 2 || !access_token || access_token.length < 10){
@@ -204,33 +295,9 @@ router.get('/feed', async (req, res) => {
       })
   }
 
-  // Get Feed from Python
-  let posts = await new Promise(resolve => {
-    const options = {
-      url : "http://api.hive-discover.tech:" + process.env.NMSLIB_API_Port + "/feed",
-      method : "POST",
-      body: JSON.stringify({
-        account_id : account_info._id,
-        account_name : account_info.name,
-        abstraction_value : 1,
-        amount : amount
-      })
-    };
-
-    request(options, (error, response, body) => {
-      try{
-        body = JSON.parse(body)
-
-        // Everything is fine
-        if(body.status === "ok")
-          resolve(body.result.map((item) => {return parseInt(item)})); // Convert str-array to int-array
-      }catch{
-        // Some error ==> return empty array
-        resolve([])
-      }          
-    });
-  });
-
+  // Get Feed
+  let posts = await calcFeed(account_info, account_data, amount, abstraction_value);
+  
   // Check if full_data, else get only authorperm (Order does not matter)
   if(full_data){
     // Get full_data from post_raw

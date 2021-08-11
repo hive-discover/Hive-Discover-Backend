@@ -1,6 +1,7 @@
 //  *** Own Modules
 const hiveManager = require('./hivemanager.js')
 const mongodb = require('../database.js')
+const amabledb = require('./../amable-db.js')
 
 
 //  *** Express API Handling
@@ -42,7 +43,7 @@ const os = require('os');
 
 const worker_count = Math.min(os.cpus().length, process.env.ANALYZER_WORKERS);
 
-if(cluster.isMaster) {
+if(!cluster.isMaster) {
   mongodb.logAppStart("api"); // Logging
   console.log(`Taking advantage of ${worker_count} Worker`)
 
@@ -68,6 +69,14 @@ if(cluster.isMaster) {
 
   console.log(`Master PID: ${process.pid}`)
 } else {
+  // Connect to DB
+  amabledb.connectToDB(process.env.AmableDB_Host).then(value => {
+    if(value)
+      console.log("Connected to amableDB");
+    else
+      throw Error("Failed to Connect to DB");
+  });
+   
   //  Start server...
   app.listen(port, () => {
     console.log(`App listening at http://localhost:${port}`)

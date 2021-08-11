@@ -54,23 +54,7 @@ async def perform_amabledb_inserts():
             else:
                 print(f"[Success] entered {posts_count} posts in amableDB")
 
-    # Rebuild KNN Index
-    payload = { "catsKNN": { "collection": "post_cats", "build": True } }
-    async with aiohttp.ClientSession(headers={'Content-Type': 'application/json'}) as session:    
-        async with session.post(AMABLE_DB_URL + "/index", json=payload) as response:
-            if not response or response.status != 200:  
-                print(f"[Failed] Cannot rebuild catsKNN Index!")
-                print(response.status)
-                print(await response.text())
-                await asyncio.sleep(5)
-                exit()
-
-            response = json.loads(await response.text())
-            if "status" not in response or response["status"] != "ok":
-                print(f"[Failed] Cannot rebuild catsKNN Index!")
-                print(response)
-                await asyncio.sleep(5) # Not exit, let it run
-
+  
 def load_models() -> None:
     '''Load TextCnn and lmtz'''
     statics.TEXT_CNN, loaded = TextCNN.load_model()
