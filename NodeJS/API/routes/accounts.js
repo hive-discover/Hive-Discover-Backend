@@ -202,7 +202,7 @@ async function calcFeed(account_info, account_data, amount, abstraction_value, k
   const amable_cursors = await amabledb.bulk(amable_bulk);
   let tasks = [];
   for(const cursor of amable_cursors){
-    if(cursor.status != "ok")
+    if(cursor.status !== "ok")
       continue;
 
     tasks.push(new Promise(async (resolve, reject) => {
@@ -223,7 +223,7 @@ async function calcFeed(account_info, account_data, amount, abstraction_value, k
   if (posts.length < amount) {
     // ==> do the same recursivly with increased k
     // Runs until enough posts were found (k always increses)
-    return (await calcFeed(account_info, account_data, amount, abstraction_value, k + 5, new Set(posts)));
+    return (await calcFeed(account_info, account_data, amount, abstraction_value, k + 5, new Set(posts), acc_ids));
   } 
 
   // To many items

@@ -1,5 +1,13 @@
 // First step: Loading .env
-console.log(require('dotenv').config({ path: './NodeJS/docker_variables.env' }))
+try{
+    console.log(require('dotenv').config({ path: './NodeJS/docker_variables.env' }));
+}catch{
+    try{
+        console.log(require('dotenv').config({ path: './docker_variables.env' }));
+    }catch{
+        console.error("Cannot load envs!");
+    }
+}
 
 const PROCESS_ARGS = process.argv.slice(2);
 
@@ -8,7 +16,6 @@ if(PROCESS_ARGS.length === 0){
 } else {
     // Start
     console.log("starting: " + PROCESS_ARGS[0])
-    let runner;
     switch(PROCESS_ARGS[0]){
         case "--help":
             console.log(" Informations are available: ")

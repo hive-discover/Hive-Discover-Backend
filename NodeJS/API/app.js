@@ -43,7 +43,7 @@ const os = require('os');
 
 const worker_count = Math.min(os.cpus().length, process.env.ANALYZER_WORKERS);
 
-if(!cluster.isMaster) {
+if(cluster.isMaster) {
   mongodb.logAppStart("api"); // Logging
   console.log(`Taking advantage of ${worker_count} Worker`)
 

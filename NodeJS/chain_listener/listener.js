@@ -60,11 +60,14 @@ function getCurrentBlockHeigth(){
 
     return new Promise((resolve, reject) => {
         request(options, (error, response, body) => {
-            if(!error && response.statusCode == 200) 
-                resolve(JSON.parse(body).result.last_irreversible_block_num)  
-            else
-                resolve(0)
-          });
+            try{
+                resolve(JSON.parse(body).result.last_irreversible_block_num)              
+            }catch{
+                console.error("Cannot get last_irreversible_block_num!")
+                console.error(error, response, body);
+                resolve(0);
+            }
+        });
     });
 } 
 
@@ -109,6 +112,8 @@ function handleCommentOP(op_value){
 
         if(Array.isArray(op_value.json_metadata.tags))
             op_value.json_metadata.tags = op_value.json_metadata.tags.join(" ");
+        if(!Array.isArray(op_value.json_metadata.image))
+            op_value.json_metadata.image = [op_value.json_metadata.image];
 
         // Check banned Words
         var isbanned = false;
@@ -126,14 +131,14 @@ function handleCommentOP(op_value){
         if(isbanned)
             return;
 
-        // Parse body and extract images
+        // Parse body and extract more images
         let html_body = md.render(op_value.body);
         let root = HTMLParser.parse(html_body);  
         const imgs = root.querySelectorAll('img')
         for(let i = 0; i < imgs.length; i ++)
         {    
             let src = imgs[i].attrs.src
-            if(!src in op_value.json_metadata.image)
+            if(src && !(src in op_value.json_metadata.image))
                 op_value.json_metadata.image.push(src)
         }
 
@@ -303,7 +308,7 @@ function handleAccountUpdateOP(op_value){
         } else {
             // Update profile_information
            // await mongodb.updateOne("account_info", {_id : account_info._id}, {$set : {profile : account_profile}})
-           bulks_account_data.push({updateOne : {
+           bulks_account_info.push({updateOne : {
                filter : {_id : account_info._id},
                update : {$set : {profile : account_profile}}
            }});
@@ -314,15 +319,15 @@ function handleAccountUpdateOP(op_value){
 }
 
 //  *** Start/Main Functions ***
-let currentBlockNum = -1;
+let currentBlockNum;
 async function getStartBlockNum(){
     const doc = await mongodb.findOneInCollection("stats", {tag : "CURRENT_BLOCK_NUM"});
-    if(doc){
+    if(doc && doc.current_num){
         // last blockNum is available
         currentBlockNum = doc.current_num;
     } else{
         // Nothing is available --> get current minus some buffers
-        currentBlockNum = (await getCurrentBlockHeigth()) - 100;
+        throw Error("Cannot get CURRENT_BLOCK_NUM from MongoDB");
     }
 }
 
@@ -416,7 +421,7 @@ async function repairDatabase(batch_size=4096){
 async function main(){
     let tasks = [];
     try{
-        const blockHeight = await getCurrentBlockHeigth().catch(err => {}); 
+        const blockHeight = await getCurrentBlockHeigth().catch(err => {return 0;}); 
         if((currentBlockNum + 5) < blockHeight){
             // Some blocks available (+5 to have a buffer)
             let amount = Math.min((blockHeight - currentBlockNum), 50) // Set amount max to 50
@@ -441,62 +446,77 @@ async function main(){
 
                         switch(op_name){
                             case "vote":
-                                tasks.push(handleVoteOP(op_value).catch(err => console.log("Error", err)))
+                                tasks.push(handleVoteOP(op_value).catch(err => console.log("Error Handling Vote: ", err)))
                                 break;
                             case "comment":
-                                tasks.push(handleCommentOP(op_value).catch(err => console.log("Error", err)))
+                                tasks.push(handleCommentOP(op_value).catch(err => console.log("Error Handling Comment: ", err)))
                                 break;
                             case "account_update":
-                                tasks.push(handleAccountUpdateOP(op_value).catch(err => console.log("Error", err)));
+                                tasks.push(handleAccountUpdateOP(op_value).catch(err => console.log("Error Handling Account Update: ", err)));
                                 break
                             case "custom_json":
-                                tasks.push(handleCustomJson(op_value).catch(err => console.log("Error", err)))
+                                tasks.push(handleCustomJson(op_value).catch(err => console.log("Error Handling Custom Json: ", err)))
                                 break;
                         }
                     }
                     
                 }
-            }).catch(err => console.log("Error", err))
+            }).catch(err => console.log("Error while starting Tasks", err))
 
+            console.log("Settings CURRENT_BLOCK_NUM to ", currentBlockNum);
             tasks.push(mongodb.updateOne("stats", {tag : "CURRENT_BLOCK_NUM"}, {$set : {current_num : currentBlockNum}}));
             try{
                 await Promise.all(tasks)
             }catch(err){console.log("Error on doing the tasks", err)}
 
             // Do updates
+            tasks = [];
             try{
                 if(bulks_account_data.length > 0){
-                    await mongodb.performBulk("account_data", bulks_account_data);
-                    bulks_account_data = [];
+                    tasks.push(async ()=>{ 
+                        await mongodb.performBulk("account_data", bulks_account_data);
+                        bulks_account_data = [];
+                    });
                 }
                 if(bulks_account_info.length > 0){
-                    await mongodb.performBulk("account_info", bulks_account_info);
-                    bulks_account_info = [];
+                    tasks.push(async ()=>{ 
+                        await mongodb.performBulk("account_info", bulks_account_info);
+                        bulks_account_info = [];
+                    });
                 }
                 if(bulks_post_info.length > 0){
-                    await mongodb.performBulk("post_info", bulks_post_info);
-                    bulks_post_info = [];
+                    tasks.push(async ()=>{ 
+                        await mongodb.performBulk("post_info", bulks_post_info);
+                        bulks_post_info = [];
+                    });
                 }
                 if(bulks_post_data.length > 0){
-                    await mongodb.performBulk("post_data", bulks_post_data);
-                    bulks_post_data = [];
+                    tasks.push(async ()=>{ 
+                        await mongodb.performBulk("post_data", bulks_post_data);
+                        bulks_post_data = [];
+                    });
                 }
                 if(bulks_post_text.length > 0){
-                    await mongodb.performBulk("post_text", bulks_post_text);
-                    bulks_post_text = [];
+                    tasks.push(async ()=>{ 
+                        await mongodb.performBulk("post_text", bulks_post_text);
+                        bulks_post_text = [];
+                    });
                 }
+
+                if(tasks.length > 0) // perform them
+                    await Promise.all(tasks);
             }catch{}
         } else {
             // Use time to repair Database
-            await repairDatabase();
+            await repairDatabase().catch();
         }
     }catch{
-        currentBlockNum -= 150; // buffer
+        currentBlockNum -= 250; // buffer
         console.error("Something went wrong. Retry later again...");
     }
 
-    // Rerun when new blocks are available (Every 3sec)
-    setTimeout(main, 3000);
+    // Rerun when new blocks are available (Every 3sec + buffer)
+    setTimeout(main, 10000);
 }
 
 // Start everything

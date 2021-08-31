@@ -78,8 +78,9 @@ function bulk(bulk_ops, counter = 0, lastError = null){
 
                 if (error) {
                     // Check if an error raised
-                    await bulk(bulk_ops, counter + 1, error);
-                    resolve(); return;
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                    resolve(await bulk(bulk_ops, counter + 1, error));
+                    return;
                 } else if(response) // Resolve Response
                     resolve(JSON.parse(response.body)); });
         }).then(value => {
@@ -123,7 +124,7 @@ async function* getCursorItems(cursor){
                     }
 
                     // Error (like Bad Gadway 502)
-                    resolve(getFunc(options, counter + 1, response));
+                    setTimeout(() => { resolve(getFunc(options, counter + 1, response)); }, 150);
                 }
               });
         });
@@ -139,6 +140,9 @@ async function* getCursorItems(cursor){
 
         // Process last Response
         if(lastResponse){
+            if(lastResponse.CannotFind && lastResponse.input) 
+                break; // Cursor is finished
+                
             if(lastResponse.status !== "ok")
                 throw Error("Status is not OK");
             

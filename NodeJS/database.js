@@ -17,16 +17,24 @@ const options = {
 }
 
 var global_client = new MongoClient(url, options);
+global_client.connect((err, client) => {
+  if(err)
+    console.error(err);
+  else
+    console.log("Connected to MongoDB");
+});
 
 function connectToDB(callback){
+  if(global_client.isConnected())
+    callback(null, global_client);
+  else
+    setTimeout(() => {callback(null, global_client);}, 250);
+  return;
 
   if(global_client.isConnected()) {
     // Is Connected
     callback(null, global_client);
   } else {
-    // Try closing connection
-    global_client.close().catch()
-
     // Make Connection
     global_client = new MongoClient(url, options);
 
@@ -53,8 +61,6 @@ async function logAppStart(app_name){
     const hour = new Date(Date.now()).getHours();
     const timestamp = config.getTodayTimestamp()
     await col.updateOne({date : timestamp}, {$inc : {["starting." + hour.toString() + "." + app_name] : 1}}, upsert=true);
-
-    await client.close()
   });
 }
 

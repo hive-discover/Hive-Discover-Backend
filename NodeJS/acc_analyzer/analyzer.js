@@ -165,7 +165,7 @@ async function masterManaging(){
   }
   
   // Endless loop with delay
-  setTimeout(masterManaging, 250);
+  setTimeout(() => masterManaging(), 250);
 
   // Wait for all to finish
   if(tasks.length > 0)
@@ -178,6 +178,7 @@ const os = require('os');
 const workerCount = Math.min(process.env.ANALYZER_WORKERS, os.cpus().length);
 
 if(cluster.isMaster) {
+  // IS MASTER
   mongodb.logAppStart("analyzer"); // Logging
 
   console.log(`Taking advantage of ${workerCount} Workers`)
@@ -222,13 +223,8 @@ if(cluster.isMaster) {
     }
   })
 
-  // Connect to DB and start Manager
   masterManaging();
-  } else {
-      // Connect to DB and set messaging service
-        setUpWorker()
-        .catch(err => {
-          console.error(err);
-          exit(1)
-        });
+} else {
+    // IS WORKER
+    setUpWorker()
 }
