@@ -1,4 +1,5 @@
 const hivejs = require('@hivechain/hivejs')
+const crypto = require('crypto');
 const MarkdownIt = require('markdown-it')
 const md = new MarkdownIt();
 const HTMLParser = require('node-html-parser');
@@ -78,14 +79,40 @@ function getContent(author, permlink){
 
 
 function checkAccessToken(username, access_token){
-    const client = new hiveSigner.Client({ app: 'action-chain', scope: ['login'], accessToken : access_token});
+    const hashed_access_token = crypto.createHash("sha256").update(access_token).digest("base64");
+    const redis_key_name = username + ".hashed_access_token";
 
     return new Promise((resolve, reject) => {
-        client.me(function (err, result) {
-            if(result && result.user == username)
-                resolve(true)           
-            else
-                resolve(false);
+        // Check if User cached in RedisDB
+        config.redisClient.get(redis_key_name, (err, reply) => {
+            if(reply && reply === hashed_access_token){
+                // Reply equals to hashed_access_token ==> username & access_token are valid
+                resolve(true);
+
+                // Update expire settings to one week
+                config.redisClient.expire(redis_key_name, 60*60*24 * 7);
+                return;
+            }
+
+            // Has to check HiveSigner
+            const hs_client = new hiveSigner.Client({ app: 'action-chain', scope: ['login'], accessToken : access_token});
+            hs_client.me(function (err, result) {
+                if(result && result.user == username){
+                    // Correct
+                    resolve(true);
+
+                    // Enter in RedisDB and set expire Setting to one week
+                    config.redisClient.set(redis_key_name, hashed_access_token, (err, reply) => {
+                        if(err)
+                            console.error(err);
+                    });
+                    config.redisClient.expire(redis_key_name, 60*60*24 * 7);
+                    return;
+                }         
+
+                // Incorrect
+                resolve(false);                
+            });
         });
     });
 }

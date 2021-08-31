@@ -1,3 +1,27 @@
+// redis Connection
+const redis = require("redis");
+const redisClient = redis.createClient(process.env.Redis_Port, process.env.Redis_Host);
+
+//  - Auth
+redisClient.auth(process.env.Redis_Password, (error) => {
+    if(error)
+        console.error(error); 
+});
+//  - Error Handling
+redisClient.on("error", (error) => {
+    if(error)
+        console.error(error);
+});
+//  - Connection Established (Debug Infos)
+redisClient.on("connect", () => {
+    console.log("Connected to RedisDB");
+});
+//  - Has to Reconnect (Debug Infos)
+redisClient.on("reconnecting", (delay) => {
+    console.log("Reconnecting to RedisDB. Delay=", delay);
+});
+
+
 const CATEGORIES = [
     ['politic', 'politics', 'election'], ['technology', 'tech', 'technical', 'blockchain'], ['art', 'painting', 'drawing', 'sketch'], ['animal', 'pet'], ['music'],
             ['travel'], ['fashion', 'style', 'mode', 'clothes'], ['gaming', 'game', 'splinterlands'], ['purpose'],
@@ -21,13 +45,22 @@ const CATEGORIES = [
 
 const HIVE_NODES = [
     "https://api.hive.blog",
+    "https://api.hive.blog", // More times because it is one of the stablest one
+    "https://api.hive.blog",
+    "https://api.hive.blog",
+    "https://api.hive.blog",
+    "https://api.deathwing.me",
+    "https://api.deathwing.me",
+    "https://api.deathwing.me", // More times because it is one of the stablest one
     "https://api.deathwing.me",
     "https://hive-api.arcange.eu",
     "https://hived.emre.sh",
     "https://api.openhive.network",
+    "https://rpc.ecency.com",
+    "https://rpc.ecency.com", // More times because it is one of the stablest one
+    "https://rpc.ecency.com",
     "https://rpc.ausbit.dev",
     "https://hived.privex.io",
-    "https://api.hivekings.com",
     "https://hive.roelandp.nl",
     "https://api.pharesim.me"
 ]
@@ -92,4 +125,4 @@ function slugifyText(text) {
 }
 
 
-module.exports = { CATEGORIES, HIVE_NODES, BANNED_WORDS, getRandomNode, getTodayTimestamp, slugifyText };
+module.exports = { redisClient, CATEGORIES, HIVE_NODES, BANNED_WORDS, getRandomNode, getTodayTimestamp, slugifyText };
