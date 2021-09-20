@@ -1,14 +1,15 @@
+version: "3.6"
 
 services:
   wordvec:
-    image: api.hive-discover.tech:5043/wordvec-api:stable
+    image: registry.hive-discover.tech/wordvec-api:stable
     restart: unless-stopped
     ports:
       - "7878:8000"
     command: -model_filepath fasttext_gensim.model
 
   web:
-    image: node-backend
+    image: registry.hive-discover.tech/node-backend
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -17,7 +18,7 @@ services:
       - "NodeJS/docker_variables.env" 
   
   categorizer:
-    image: python-backend
+    image: registry.hive-discover.tech/python-backend
     restart: unless-stopped
     command: --categorizer
     depends_on:
@@ -26,34 +27,28 @@ services:
       - "Python/docker_variables.env" 
   
   lang-detector:
-    image: python-backend
+    image: registry.hive-discover.tech/python-backend
     restart: unless-stopped
     command: --langdetector
     env_file:
       - "Python/docker_variables.env" 
 
   chain-listener:
-    image: node-backend
+    image: registry.hive-discover.tech/node-backend
     restart: unless-stopped
     command: --chainlistener --unhandled-rejections=strict
     env_file:
       - "NodeJS/docker_variables.env" 
 
-  nmslib-api:
-    image: cpp-backend
-    restart: unless-stopped
-    ports:
-      - "8585:8585"
-
   acc-analyzer:
-    image: node-backend
+    image: registry.hive-discover.tech/node-backend
     restart: unless-stopped
     command: --analyzer --unhandled-rejections=strict
     env_file:
       - "NodeJS/docker_variables.env" 
 
   ac-bot:
-    image: python-backend
+    image: registry.hive-discover.tech/python-backend
     restart: unless-stopped
     command: --bot
     env_file:
