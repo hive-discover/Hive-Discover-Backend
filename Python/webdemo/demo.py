@@ -13,7 +13,35 @@ RANDOM_POSTS = [
     ("@lockhart", "/huawei-continue-harmony-os-campaign"),
     ("@antoniojoseha", "/how-safe-it-is-sharing-our-information"),
     ("@natichi", "/daily"),
-    ("@daring-celt", "/autumn-sketches-3")
+    ("@greengalletti", "/espeng-emociones-un-accidente-surrealista-y-dramatico-con-un-ganador-inesperado-en-el-gp-de-monza-de-formula-1-emotions-a-surre"),
+    ("@chops316", "/chops316-monday-morning-quarterback-2021-opening-night-let-s-go"),
+    ("@wolfgangsport", "/top-5-cities-ranked-for-nfl-international-expansion"),
+    ("@adhammer", "/some-fans-are-finally-understanding"),
+    ("@fermentedphil", "/cape-gooseberries-the-plant-that"),
+    ("@intoy.bugoy", "/goosebumps-experience-in-the-highest-summit-of-cebu-island-osmena-peak-dalaguete-cebu-philippines-or-lakwatsaniintoy-diary-00"),
+    ("@edprivat", "/road-trip-to-marciac-france"),
+    ("@macchiata", "/an-entire-day-of-food-adventure"),
+    ("@obsesija", "/homemade-cheese-pie-recipe"),
+    ("@natichi", "/form"),
+    ("@armandosodano", "/marine-amphitheater-watercolor-on-paper-step-by-step"),
+    ("@photovisions", "/norwegian-forest-into-the-forest"),
+    ("@yashny", "/my-covid-19-vaccination-experience"),
+    ("@derangedvisions", "/what-an-amazing-gaming-experience"),
+    ("@wirago", "/new-world-open-beta-test"),
+    ("@emuse", "/the-sims-4-my-experience-with-the-gaming-pack-strangerville"),
+    ("@daltono", "/updmnsds"),
+    ("@themarkymark", "/getting-started-with-hive-app-development"),
+    ("@sarkodieeric1", "/cryptocurrency-portfolio-management"),
+    ("@lockhart", "/razer-brings-the-hype-and-not-much-more"),
+    ("@code-redex", "/top-5-tips-and-tricks-to-be-a-better-programmer"),
+    ("@rbalzan79", "/space-technology-as-an-essential-tool-for-the-protection-of-our-environment"),
+    ("@oscurity", "/what-the-petals-are-used"),
+    ("@oscurity", "/the-pollen-to-the-microscope"),
+    ("@lupafilotaxia", "/our-brain-and-its-particular-way-of-encoding-time"),
+    ("@mauromar", "/new-giant-leap-towards-fusion-energy-nuevo-paso-de-gigante-hacia-la-energia-de-fusion"),
+    ("@jorgebgt", "/a-new-rotary-detonation-space"),
+    ("@jorgebgt", "/etna-grows-fast-geological-processes"),
+    ("@mauromar", "/crispr-gene-editing-tool-successfully-tested-in-space-probada-con-exito-la-herramienta-de-edicion-genetica-crispr-en-el-espacio")
 ]
 
 
@@ -217,6 +245,7 @@ def main(user_author : str, user_permlink : str):
     img_col.image(cv_im)
     text_col.write("**Titel:** " + comment["title"])
     text_col.write("**Tags:** " + " ".join(comment["json_metadata"]["tags"]))
+    text_col.write(f"Lese den gesamten Beitrag [hier](https://peakd.com/@{comment['author']}/{comment['permlink']})")
     progress_bar.progress(10)
 
     # Get plain text
