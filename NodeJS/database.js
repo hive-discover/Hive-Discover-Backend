@@ -5,26 +5,33 @@ const config = require("./config");
 const User = process.env.MongoDB_User, Password = process.env.MongoDB_Password;
 const Host = process.env.MongoDB_Host, DatabaseName = process.env.MongoDB_Name;
 const url = "mongodb://" + User + ":" + Password + "@" + Host + ":27017/?authSource=admin&readPreference=primary&ssl=false"
-const options = {    
-    server: {    
-      auto_reconnect: true,    
-      socketOptions: {
-        keepAlive: 30000,    
-        connectTimeoutMS: 60000,    
-        socketTimeoutMS: 60000,    
-      }    
-    }
+const options = {
+  useUnifiedTopology : true
 }
 
-var global_client = new MongoClient(url, options);
-global_client.connect((err, client) => {
-  if(err)
-    console.error(err);
-  else
-    console.log("Connected to MongoDB");
-});
 
-function connectToDB(callback){
+var global_client = null;
+
+async function connectToDB(callback){
+  if(!global_client){
+    // Connect to DB
+    global_client = await new Promise(resolve => {
+      MongoClient.connect(url, options, (err, db) => {
+        if(err) throw err;
+        resolve(db);
+      });
+    }).catch(err => {
+        // Error
+        console.log("Cannot Connect to MongoDB: ", err);
+        process.exit(1);
+    });
+  }
+
+  // Connection is established
+  callback(null, global_client);
+  
+
+  return;
   local_client = new MongoClient(url, options);
   local_client.connect((err, client) => {
     if(err){
@@ -68,7 +75,7 @@ function connectToDB(callback){
 }
 
 async function logAppStart(app_name){
-  connectToDB(async (err, client) => {
+  await connectToDB(async (err, client) => {
     const col = client.db(DatabaseName).collection("stats");
 
     // Log it
@@ -81,7 +88,7 @@ async function logAppStart(app_name){
 //  *** Find Operations ***
 function findOneInCollection(collection_name, query){
     return new Promise(async (resolve, reject) => {
-      connectToDB(async (err, client) => {
+      await connectToDB(async (err, client) => {
         database = client.db(DatabaseName);
         const col = database.collection(collection_name);
         const doc = await col.findOne(query)
@@ -91,8 +98,8 @@ function findOneInCollection(collection_name, query){
 }
 
 function findManyInCollection(collection_name, query, options = {}){
-    return new Promise((resolve, reject) => {
-      connectToDB(async (err, client) => {
+    return new Promise(async (resolve, reject) => {
+      await connectToDB(async (err, client) => {
         database = client.db(DatabaseName);
         let col = database.collection(collection_name);
         resolve(col.find(query, options));
@@ -101,8 +108,8 @@ function findManyInCollection(collection_name, query, options = {}){
 }
   
 function countDocumentsInCollection(collection_name, query){
-    return new Promise((resolve, reject) => {
-      connectToDB(async (err, client) => {
+    return new Promise(async (resolve, reject) => {
+      await connectToDB(async (err, client) => {
         database = client.db(DatabaseName);
         let col = database.collection(collection_name);
         resolve(col.countDocuments(query));
@@ -111,8 +118,8 @@ function countDocumentsInCollection(collection_name, query){
 }
 
 function aggregateInCollection(collection_name, pipeline){
-    return new Promise((resolve, reject) => {
-      connectToDB(async (err, client) => {
+    return new Promise(async (resolve, reject) => {
+      await connectToDB(async (err, client) => {
         database = client.db(DatabaseName);
         let col = database.collection(collection_name);
         resolve(col.aggregate(pipeline));
@@ -123,8 +130,8 @@ function aggregateInCollection(collection_name, pipeline){
   
 //  *** Manipulate Operations ***
 function insertOne(collection_name, document){
-  return new Promise((resolve, reject) => {
-    connectToDB(async (err, client) => {
+  return new Promise(async (resolve, reject) => {
+    await connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);
       resolve(col.insertOne(document));
@@ -133,8 +140,8 @@ function insertOne(collection_name, document){
 }
 
 function updateOne(collection_name, query, update, upsert = false){
-  return new Promise((resolve, reject) => {
-    connectToDB(async (err, client) => {
+  return new Promise(async (resolve, reject) => {
+    await connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);
       resolve(col.updateOne(query, update, {upsert : upsert}));
@@ -143,8 +150,8 @@ function updateOne(collection_name, query, update, upsert = false){
 }
 
 function updateMany(collection_name, query, update){
-  return new Promise((resolve, reject) => {
-    connectToDB(async (err, client) => {
+  return new Promise(async (resolve, reject) => {
+    await connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);
       resolve(col.updateMany(query, update));
@@ -153,8 +160,8 @@ function updateMany(collection_name, query, update){
 }
 
 function deleteMany(collection_name, query){
-  return new Promise((resolve, reject) => {
-    connectToDB(async (err, client) => {
+  return new Promise(async (resolve, reject) => {
+    await connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);
       resolve(col.deleteMany(query));
@@ -163,8 +170,8 @@ function deleteMany(collection_name, query){
 }
   
 function performBulk(collection_name, bulk){
-  return new Promise((resolve, reject) => {
-    connectToDB(async (err, client) => {
+  return new Promise(async (resolve, reject) => {
+    await connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);  
       resolve(col.bulkWrite(bulk, {ordered : false}));
@@ -174,7 +181,7 @@ function performBulk(collection_name, bulk){
   
 function generateUnusedID(collection_name){
   return new Promise(async (resolve) => {
-    connectToDB(async (err, client) => {
+    await connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);
 

@@ -19,9 +19,17 @@ app.use('/proxy', require('./routes/proxy.js'))
 
 //  Own Routes
 app.get('/', async (req, res) => {
+  const status_obj = {
+    status : "ok",
+    info : "Service is running",
+  };
+
+  res.send(status_obj).end()
+});
+
+app.get('/stats', async (req, res) => {
   let status_obj = {
     status : "ok",
-    info : "Service is running", 
     database : {
       accounts : 0, 
       posts : 0, 
@@ -44,6 +52,7 @@ app.get('/', async (req, res) => {
 
   res.send(status_obj).end()
 });
+
 
 // Clustering
 const cluster = require('cluster');
