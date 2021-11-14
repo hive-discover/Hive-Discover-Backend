@@ -1,9 +1,10 @@
 // First step: Loading .env
 try{
     console.log(require('dotenv').config({ path: './NodeJS/docker_variables.env' }));
+    console.log(require('dotenv').config({ path: './docker_variables.env' }));
 }catch{
     try{
-        console.log(require('dotenv').config({ path: './docker_variables.env' }));
+        
     }catch{
         console.error("Cannot load envs!");
     }

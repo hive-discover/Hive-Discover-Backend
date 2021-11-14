@@ -2,6 +2,8 @@ const mongodb = require('../../database.js')
 const hiveManager = require('./../hivemanager.js')
 const stats = require('./../stats.js')
 const sortings = require("../sorting.js");
+const config = require("./../../config");
+const amabledb = require('./../../amable-db.js')
 
 const request = require('request');
 const queryParser = require('express-query-int');
@@ -214,6 +216,119 @@ router.post('/accounts', async (req, res) => {
     const total = await mongodb.countDocumentsInCollection("account_info", {})
     const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
     res.send({status : "ok", accounts : account_objs, total : await total, time : elapsedSeconds});
+})
+
+router.post('/category', async (req, res) => {
+    await stats.addStat(req);
+    const startTime = process.hrtime();
+
+    const query = req.body.query, raw_data = req.body.raw_data;
+    const amount = Math.min(parseInt(req.body.amount || 7), 50);
+
+    if(query == null)
+    {
+        res.send({status : "failed", err : "Query is null"}).end()
+        return;
+    }
+
+    // Make search label
+    let search_label_values = [];
+    let search_label_names = []
+    config.CATEGORIES.forEach(topic => {
+      if(query.categories.includes(topic[0])){
+        // Category is wished
+        search_label_values.push(1);
+        search_label_names.push(topic[0]);
+      } else {
+        // Category is not wished
+        search_label_values.push(0);
+      }    
+    });
+
+    if(search_label_names.length == 0){
+      // No Labels were given
+      res.send({status : "failed", err : "Query.categories does not contain cats"}).end()
+      return;
+    }
+
+    // Check if redis cached this query
+    let redis_key_name = JSON.stringify(search_label_names);
+    let posts = await (new Promise(resolve => {
+      config.redisClient.get(redis_key_name, async (err, reply) => {
+        if(reply){
+          // We got something cached
+          resolve(JSON.parse(reply));
+        } else {
+          // Get some items from CPP-NswAPI and cache it later
+          // Get cursor
+          let options = {
+            'method': 'POST',
+            'url': 'http://api.hive-discover.tech:' + process.env.Nsw_API_Port + '/similar-category',
+            'headers': {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              "amount": amount,
+              "category": search_label_values
+            })
+          
+          };
+        
+          let posts = [];
+          posts = await (new Promise((resolve, reject) => {
+            request(options, (error, response) => {
+              // Get body
+              if (error) console.error(error);
+              let body = JSON.parse(response.body);
+
+              // Convert to simple list               
+              let result = [];
+              Object.keys(body.posts).forEach(key => result.push(body.posts[key]));
+              
+              resolve(result);
+            });
+          })).catch();
+
+        // Cache posts with TTL setting (30 Minutes)
+        config.redisClient.set(redis_key_name, JSON.stringify(posts), (err, reply) => {if (err) console.error(err);});
+        config.redisClient.expire(redis_key_name, 60*30);
+        resolve(posts);
+        }
+      })
+    }));
+
+  while(posts.length > amount)
+      posts.splice(Math.floor(Math.random() * posts.length), 1);
+
+    // Get authorperms or raw post if wished
+    if(raw_data){
+      // Get raw posts
+      const post_raw_cursor = await mongodb.findManyInCollection("post_raw", {_id : {$in : posts}})
+      for await(const post of post_raw_cursor) {
+        // Set on correct index
+        posts.forEach((elem, index) => {
+          if(elem === post._id)
+            posts[index] = post.raw;
+          
+        });
+      }   
+    } else {
+      // Get authorperms
+      const post_info_cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {projection : {_id : 1, author : 1, permlink : 1}})
+      for await(const post of post_info_cursor){
+        // Set on correct index
+        posts.forEach((elem, index) => {
+          if(elem === post._id)
+            posts[index] = {author : post.author, permlink : post.permlink}
+          
+        });           
+      }
+    }
+
+    // Remove errors (when the elem is _id (a number))
+    posts = posts.filter(elem => !Number.isInteger(elem));
+    const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
+    res.send({status : "ok", posts : posts, searched_categories : search_label_names, time : elapsedSeconds}).end()
 })
 
 router.get('/lang-overview', async (req, res) => {

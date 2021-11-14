@@ -25,6 +25,20 @@ global_client.connect((err, client) => {
 });
 
 function connectToDB(callback){
+  local_client = new MongoClient(url, options);
+  local_client.connect((err, client) => {
+    if(err){
+      // Failed, retry later
+      console.log(err);
+      setTimeout(()=>{connectToDB(callback)}, 25);
+    } else {
+      // Success
+      global_client = client;
+      callback(null, client);
+    }
+  });
+
+  return;
   if(global_client.isConnected())
     callback(null, global_client);
   else
@@ -153,7 +167,7 @@ function performBulk(collection_name, bulk){
     connectToDB(async (err, client) => {
       database = client.db(DatabaseName);
       let col = database.collection(collection_name);  
-      resolve(col.bulkWrite(bulk));
+      resolve(col.bulkWrite(bulk, {ordered : false}));
     });
   });
 }

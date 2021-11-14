@@ -1,18 +1,16 @@
 const request = require('request');
-const HTMLParser = require('node-html-parser');
 const hivejs = require('@hivechain/hivejs')
-const MarkdownIt = require('markdown-it')
-const md = new MarkdownIt();
 
 const mongodb = require('./../database.js')
 const config = require('./../config')
+const processing = require('./processing.js');
 
 //  *** Blockchain Operations ***
-function getBlockOperations(block_nums){
+async function getBlockOperations(block_nums){
     if(block_nums.length === 0)
         return '[]';
 
-    const dataStrings = function () {
+    const dataStrings = () => {
         let list = [];
         for(let i = 0; i < block_nums.length; i++){
             // Push all block_nums
@@ -32,14 +30,19 @@ function getBlockOperations(block_nums){
         body: dataStrings()
     };
 
-    return new Promise((resolve, reject) => {
-        request(options, (error, response, body) => {
+    const body = await new Promise((resolve, reject) => {
+        request(options, async (error, response, body) => {
             if(!error && response.statusCode == 200)
               resolve(body);
-            else
-              reject(error)
-          });
-    });
+            else {
+                console.error("Cannot get Operations: ", error, body);
+                await new Promise(resolve => setTimeout(()=>{resolve();}, 1500));
+                process.exit(-2);   
+            }
+        });
+    })
+
+    return body;
 }
 
 function getCurrentBlockHeigth(){
@@ -58,265 +61,19 @@ function getCurrentBlockHeigth(){
         body: dataString
       };
 
-    return new Promise((resolve, reject) => {
-        request(options, (error, response, body) => {
+    return new Promise(async (resolve, reject) => {
+        request(options, async (error, response, body) => {
             try{
                 resolve(JSON.parse(body).result.last_irreversible_block_num)              
             }catch{
-                console.error("Cannot get last_irreversible_block_num!")
-                console.error(error, response, body);
-                resolve(0);
+                console.error("Cannot get last_irreversible_block_num: ", error, body);
+                await new Promise(resolve => setTimeout(()=>{resolve();}, 1500));
+                process.exit(-3);              
             }
         });
     });
 } 
 
-// Arrays for bulk operations
-let bulks_account_data = [], bulks_account_info = [];
-let bulks_post_data = [], bulks_post_info = [], bulks_post_text = [];
-
-//  *** Operation Handlers ***
-function handleCommentOP(op_value){
-    return new Promise(async (resolve) => {
-        if(op_value.parent_author !== ""){
-            // Is comment
-            resolve();
-            return;
-        }
-
-        // Get later unused id and check if it exists
-        const getUnusedID_task = mongodb.generateUnusedID("post_info");
-
-        // Check if banned (post or user) OR if it's exists
-        if( await mongodb.findOneInCollection("banned", {author : op_value.author, permlink: op_value.permlink}) || 
-            await mongodb.findOneInCollection("banned", {name : op_value.author}) ||
-            await mongodb.findOneInCollection("post_info", {author : op_value.author, permlink: op_value.permlink})) {
-            // Is banned / already exists
-            resolve();
-            return;
-        }
-
-        // Start preparing the Post
-        try{
-            op_value.json_metadata = JSON.parse(op_value.json_metadata)
-        } catch {
-            // JSON Parse error --> set to {} because it is usually '' then
-            op_value.json_metadata = {}
-        }
-        
-        if(!op_value.json_metadata.tags) 
-            op_value.json_metadata.tags = [];
-        if(!op_value.json_metadata.image) 
-            op_value.json_metadata.image = [];
-        let raw_post = {...op_value}
-
-        if(Array.isArray(op_value.json_metadata.tags))
-            op_value.json_metadata.tags = op_value.json_metadata.tags.join(" ");
-        if(!Array.isArray(op_value.json_metadata.image))
-            op_value.json_metadata.image = [op_value.json_metadata.image];
-
-        // Check banned Words
-        var isbanned = false;
-        config.BANNED_WORDS.forEach((item)=>{
-            if(
-                op_value.body.indexOf(item) >= 0 || 
-                op_value.json_metadata.tags.indexOf(item) >= 0 ||
-                op_value.title.indexOf(item) >= 0
-            ){
-                // Not enter
-                isbanned = true;
-                resolve();
-            }
-        });
-        if(isbanned)
-            return;
-
-        // Parse body and extract more images
-        let html_body = md.render(op_value.body);
-        let root = HTMLParser.parse(html_body);  
-        const imgs = root.querySelectorAll('img')
-        for(let i = 0; i < imgs.length; i ++)
-        {    
-            let src = imgs[i].attrs.src
-            if(src && !(src in op_value.json_metadata.image))
-                op_value.json_metadata.image.push(src)
-        }
-
-        // Reparse to only get text
-        root = HTMLParser.parse(root.text);
-        op_value.body = root.text;   
-        const plain_body = op_value.body;
-        op_value.body = config.slugifyText(op_value.body); // replaceAll non-latin
-        op_value.title = config.slugifyText(op_value.title); // replaceAll non-latin
-        op_value.json_metadata.tags = config.slugifyText(op_value.json_metadata.tags); // replaceAll non-latin
-
-        if(op_value.body.split(' ').length < 10) {
-            // Too low words
-            resolve();
-            return;
-        }
-
-        if(op_value.timestamp)
-            op_value.timestamp = new Date(Date.parse(op_value.timestamp));
-        else 
-            op_value.timestamp = new Date(Date.now());
-
-        // Prepare documents. Timestamp just now becuase op_value does not have it but because it is the latest block it matches it (nearly)
-        const post_id = await getUnusedID_task;
-        const post_info_doc = {_id : post_id, author : op_value.author, permlink : op_value.permlink, timestamp : op_value.timestamp};
-        const post_text_doc = {_id : post_id, title : op_value.title, body : op_value.body, tag_str : op_value.json_metadata.tags, timestamp : op_value.timestamp}
-        const post_data_doc = {_id : post_id, categories : null, lang : null, timestamp : op_value.timestamp}
-        raw_post.json_metadata = op_value.json_metadata;
-        const post_raw_doc = {_id : post_id, timestamp : op_value.timestamp, raw : raw_post, plain : {body : plain_body}}
-
-        try{
-            // Not insert in bulk_operations because it depends on post_info document
-            // and when this fails, the other MUST also to fail
-            await mongodb.insertOne("post_info", post_info_doc);
-            await Promise.all([
-                mongodb.insertOne("post_data", post_data_doc),
-                mongodb.insertOne("post_text", post_text_doc),
-                mongodb.insertOne("post_raw", post_raw_doc),
-            ])
-        }catch{/* Duplicate Error */}
-
-        resolve()
-    }).catch((err) => {})
-}
-
-function handleVoteOP(op_value){
-    return new Promise(async (resolve) => {
-        // Find account_info
-        const account_info = await mongodb.findOneInCollection("account_info", {name : op_value.voter});
-        if(!account_info){
-            // Account does not exist --> check if banned. Else create one
-            if(await mongodb.findOneInCollection("banned", {name : op_value.voter})){
-                resolve();
-                return;
-            }
-
-            // Not banned --> Create account and set profile information
-            const _id = await mongodb.generateUnusedID("account_info");
-            bulks_account_info.push({insertOne : {document : {_id : _id, name : op_value.voter}}});
-
-            resolve();
-            return;
-        }
-
-        // Find account_data --> When available the account was analyzed
-        const account_data = await mongodb.findOneInCollection("account_data", {_id : account_info._id});
-        if(!account_data){
-            // Account is not analyzed --> just return
-            resolve();
-            return;
-        }
-
-        // Find post and then set it into
-        const post_info = await mongodb.findOneInCollection("post_info", {author : op_value.author, permlink: op_value.permlink});
-        if(post_info)
-            bulks_post_data.push({ updateOne : {
-                filter : {_id : post_info._id},
-                update : {$addToSet : {votes : account_info._id}}
-            }});
-
-        resolve();
-    }).catch((err) => {})
-}
-
-function handleCustomJson(op_value){
-    return new Promise(async (resolve) => {
-        if(op_value.id !== "config_hive_discover"){
-            // Not interesting
-            resolve();
-            return;
-        }
-
-        const account = op_value.required_posting_auths[0];
-        const json = JSON.parse(op_value.json);
-
-        //  ** Ban Stuff **
-        if(json.cmd === "ban"){
-            if(!await mongodb.findOneInCollection("banned", {name : account})){
-                // Enter into DB and check if
-                await mongodb.insertOne("banned", {name : account});
-
-                const account_info = await mongodb.findOneInCollection("account_info", {"name" : account});
-                if(account_info){
-                    // Got data about him --> delete everything
-                    // 1. Find posts by him
-                    let post_ids = [];
-                    for await(const post of await mongodb.findManyInCollection("post_info", {author : account}, {_id : 1}))
-                        post_ids.push(post._id);
-
-
-                    // 2. Delete all
-                    await Promise.all([
-                        mongodb.deleteMany("account_info", {_id : account_info._id}), // account_info entry
-                        mongodb.deleteMany("account_data", {_id : account_info._id}), // account_data entry
-                        mongodb.updateMany("post_data", {votes : account_info._id}, {$pull : {votes : account_info._id}}), // votes entries
-                        mongodb.deleteMany("post_info", {_id : {$in : post_ids}}), // post_info entry
-                        mongodb.deleteMany("post_data", {_id : {$in : post_ids}}), // post_data entry
-                        mongodb.deleteMany("post_text", {_id : {$in : post_ids}}), // post_text entry
-                        mongodb.deleteMany("post_raw", {_id : {$in : post_ids}}), // post_raw entry
-                    ]);
-
-                }
-            }
-        }
-        if(json.cmd === "unban")
-            await mongodb.deleteMany("banned", {name : account});
-        
-
-
-        resolve();
-    }).catch((err) => {})
-}
-
-function handleAccountUpdateOP(op_value){
-    return new Promise(async (resolve) => {
-        // Prepare account_profile
-        let metadata;
-        try{
-            metadata = JSON.parse(op_value.json_metadata);
-        }catch{resolve(); return; /* Nothing is there */}
-        
-        if(metadata.profile)
-            metadata = metadata.profile
-
-        let account_profile = {};
-        if(metadata.location)
-            account_profile.location = metadata.location;
-        if(metadata.about)
-            account_profile.about = metadata.about;
-        if(metadata.name)
-            account_profile.name = metadata.name;
-
-
-
-        // Find account
-        const account_info = await mongodb.findOneInCollection("account_info", {name : op_value.account});
-        if(!account_info){
-            // Check if banned
-            if(await mongodb.findOneInCollection("banned", {name : op_value.account})){
-                resolve();
-                return;
-            }
-
-            // Not banned --> Create account and set profile information
-            const _id = await mongodb.generateUnusedID("account_info");
-            bulks_account_info.push({insertOne : {document : {_id : _id, name : op_value.account, profile : account_profile}}});
-        } else {
-            // Update profile_information
-           // await mongodb.updateOne("account_info", {_id : account_info._id}, {$set : {profile : account_profile}})
-           bulks_account_info.push({updateOne : {
-               filter : {_id : account_info._id},
-               update : {$set : {profile : account_profile}}
-           }});
-        }
-
-        resolve();
-    }).catch((err) => {})
-}
 
 //  *** Start/Main Functions ***
 let currentBlockNum;
@@ -340,7 +97,8 @@ async function repairDatabase(batch_size=4096){
         return;
     }
 
-    let corrupted_ids = new Set()  
+    let corrupted_ids = new Set();
+    console.log("Repairing Database"); 
 
     const check_func = (collection, ids) => {
         return new Promise(async (resolve) => {
@@ -419,106 +177,48 @@ async function repairDatabase(batch_size=4096){
 }
 
 async function main(){
-    let tasks = [];
-    try{
-        const blockHeight = await getCurrentBlockHeigth().catch(err => {return 0;}); 
-        if((currentBlockNum + 5) < blockHeight){
-            // Some blocks available (+5 to have a buffer)
-            let amount = Math.min((blockHeight - currentBlockNum), 50) // Set amount max to 50
-            let requestIds = function (){
-                // Return all block Ids which should be queried
-                let l = [];
-                for(let i = 0; i < amount; i++)
-                    l.push(currentBlockNum + i)
-                return l;
-            }
+    if(!currentBlockNum)
+        await getStartBlockNum();
 
-            await getBlockOperations(requestIds()).then((apiResponse) => {
-                // Iterate through over all blocks (apiResponse = [block1, block2, block3 ...])
-                apiResponse = JSON.parse(apiResponse);
-                for(let i = 0; i < apiResponse.length; i++){
-                    currentBlockNum += 1
-
-                    // Iterate through every operation in block (block = [op1, op2, op3 ...])
-                    for(let k = 0; k < apiResponse[i].result.length; k ++){
-                        const operation = apiResponse[i].result[k];
-                        const op_name = operation.op[0], op_value = operation.op[1];
-
-                        switch(op_name){
-                            case "vote":
-                                tasks.push(handleVoteOP(op_value).catch(err => console.log("Error Handling Vote: ", err)))
-                                break;
-                            case "comment":
-                                tasks.push(handleCommentOP(op_value).catch(err => console.log("Error Handling Comment: ", err)))
-                                break;
-                            case "account_update":
-                                tasks.push(handleAccountUpdateOP(op_value).catch(err => console.log("Error Handling Account Update: ", err)));
-                                break
-                            case "custom_json":
-                                tasks.push(handleCustomJson(op_value).catch(err => console.log("Error Handling Custom Json: ", err)))
-                                break;
-                        }
-                    }
-                    
-                }
-            }).catch(err => console.log("Error while starting Tasks", err))
-
-            console.log("Settings CURRENT_BLOCK_NUM to ", currentBlockNum);
-            tasks.push(mongodb.updateOne("stats", {tag : "CURRENT_BLOCK_NUM"}, {$set : {current_num : currentBlockNum}}));
-            try{
-                await Promise.all(tasks)
-            }catch(err){console.log("Error on doing the tasks", err)}
-
-            // Do updates
-            tasks = [];
-            try{
-                if(bulks_account_data.length > 0){
-                    tasks.push(async ()=>{ 
-                        await mongodb.performBulk("account_data", bulks_account_data);
-                        bulks_account_data = [];
-                    });
-                }
-                if(bulks_account_info.length > 0){
-                    tasks.push(async ()=>{ 
-                        await mongodb.performBulk("account_info", bulks_account_info);
-                        bulks_account_info = [];
-                    });
-                }
-                if(bulks_post_info.length > 0){
-                    tasks.push(async ()=>{ 
-                        await mongodb.performBulk("post_info", bulks_post_info);
-                        bulks_post_info = [];
-                    });
-                }
-                if(bulks_post_data.length > 0){
-                    tasks.push(async ()=>{ 
-                        await mongodb.performBulk("post_data", bulks_post_data);
-                        bulks_post_data = [];
-                    });
-                }
-                if(bulks_post_text.length > 0){
-                    tasks.push(async ()=>{ 
-                        await mongodb.performBulk("post_text", bulks_post_text);
-                        bulks_post_text = [];
-                    });
-                }
-
-                if(tasks.length > 0) // perform them
-                    await Promise.all(tasks);
-            }catch{}
-        } else {
-            // Use time to repair Database
-            await repairDatabase().catch();
-        }
-    }catch{
-        currentBlockNum -= 250; // buffer
-        console.error("Something went wrong. Retry later again...");
+    const blockHeight = await getCurrentBlockHeigth().catch(err => {return 0;});
+    if(currentBlockNum >= blockHeight){
+        // No blocks available, do it later again
+        setTimeout(main, 2000);
+        return;
     }
 
-    // Rerun when new blocks are available (Every 3sec + buffer)
-    setTimeout(main, 10000);
+    // Some blocks are available
+    let amount = Math.min((blockHeight - currentBlockNum), 50) // Set amount max to 50
+    let requestIds = () => {
+        // Return all block Ids which should be queried
+        let l = [];
+        for(let i = 0; i < amount; i++)
+            l.push(currentBlockNum + i)
+        return l;
+    };
+
+    // Get and Process all blocks
+    const apiResponse = JSON.parse(await getBlockOperations(requestIds())); 
+    for(let i = 0; i < apiResponse.length; i++){
+        // Iterate through all blocks (apiResponse = [block1, block2, block3 ...])
+        // and process them
+        await processing.onBlock(apiResponse[i]);
+        currentBlockNum += 1;
+    }
+
+    // Setting new CurrentBlockNum
+    console.log("Settings CURRENT_BLOCK_NUM to ", currentBlockNum);
+    await mongodb.updateOne("stats", {tag : "CURRENT_BLOCK_NUM"}, {$set : {current_num : currentBlockNum}}).catch(err => {
+        console.error("Cannot Set CurrentBlockNum, exiting and then restart");
+        process.exit(-1);
+    })
+    
+
+    // Do it again in 1 Seconds because (maybe) not all Blocks are analyzed
+    setTimeout(main, 1000);
 }
 
 // Start everything
 mongodb.logAppStart("chain-listener");
-repairDatabase().then(getStartBlockNum()).then(main());
+repairDatabase()
+    .then(main());

@@ -28,8 +28,8 @@ async function correctTimestamps(batch_size=1024){
     
     let current_doc = 0, bulk_operations = 0;
 
-    let d = new Date(year=2021, month=3, date=10)
-    let posts = await (await mongodb.findManyInCollection("post_info", {timestamp : {$gt : d}})).toArray();
+    let d = new Date(year=2021, month=7, date=20)
+    let posts = await (await mongodb.findManyInCollection("post_info", {timestamp : {$gt : d}})).sort({timestamp : 1}).toArray();
     let tasks = [];
     for(let i=0; i < posts.length; i++){
         const post_info = posts[i];
@@ -90,8 +90,46 @@ async function correctTimestamps(batch_size=1024){
     console.log("Finished. Total made: " + bulk_operations.toString())
 }
 
+async function correctTextBodies(batch_size=33){
+    const corrector = (_id, body) => {
+        body = md.render(body);
+        body = HTMLParser.parse(body.text);
+        body = HTMLParser.parse(body.text);
+        body = config.slugifyText(body.text);
 
-mongodb.connectToDB()
-    .then(async ()=> {
-        await correctTimestamps();
-    })
+        return { 
+            updateOne: 
+            {
+                filter : {_id : _id},
+                update : {$set : {body : body}}
+            }
+        }
+    }
+    
+    const cursor = await mongodb.findManyInCollection("post_raw", {});
+    let bulk = [];
+    let counter = 0;
+    for await(const post of cursor){         
+        bulk.push({ 
+            updateOne: 
+            {
+                filter : {_id : post._id},
+                update : {$set : {body : post.plain.body}}
+            }
+        });
+
+        if(bulk.length > batch_size){
+            await mongodb.performBulk("post_text", bulk);
+            bulk = [];
+        }   
+
+        counter += 1;
+        console.log(counter);
+    }
+
+    if(bulk.length > 0)
+        await mongodb.performBulk("post_text", bulk);
+}
+
+//correctTimestamps();
+correctTextBodies();

@@ -19,10 +19,18 @@ app.use('/proxy', require('./routes/proxy.js'))
 
 //  Own Routes
 app.get('/', async (req, res) => {
-  let status_obj = {status : "ok",
-                    info : "Service is running", 
-                    database : {accounts : 0, posts : 0, un_categorized : 0, account_data : 0, stats : 0, banned : 0}
-                   }
+  let status_obj = {
+    status : "ok",
+    info : "Service is running", 
+    database : {
+      accounts : 0, 
+      posts : 0, 
+      un_categorized : 0, 
+      account_data : 0, 
+      stats : 0, 
+      banned : 0
+    }
+  };
 
   // Get data from DB
   await Promise.all([
@@ -70,12 +78,12 @@ if(cluster.isMaster) {
   console.log(`Master PID: ${process.pid}`)
 } else {
   // Connect to DB
-  amabledb.connectToDB(process.env.AmableDB_Host).then(value => {
+ /* amabledb.connectToDB(process.env.AmableDB_Host).then(value => {
     if(value)
       console.log("Connected to amableDB");
     else
       throw Error("Failed to Connect to DB");
-  });
+  });*/
    
   //  Start server...
   app.listen(port, () => {

@@ -45,24 +45,10 @@ const CATEGORIES = [
 
 const HIVE_NODES = [
     "https://api.hive.blog",
-    "https://api.hive.blog", // More times because it is one of the stablest one
-    "https://api.hive.blog",
-    "https://api.hive.blog",
-    "https://api.hive.blog",
-    "https://api.deathwing.me",
-    "https://api.deathwing.me",
-    "https://api.deathwing.me", // More times because it is one of the stablest one
     "https://api.deathwing.me",
     "https://hive-api.arcange.eu",
     "https://hived.emre.sh",
-    "https://api.openhive.network",
-    "https://rpc.ecency.com",
-    "https://rpc.ecency.com", // More times because it is one of the stablest one
-    "https://rpc.ecency.com",
-    "https://rpc.ausbit.dev",
-    "https://hived.privex.io",
-    "https://hive.roelandp.nl",
-    "https://api.pharesim.me"
+    "https://api.openhive.network"
 ]
 
 const BANNED_WORDS = [

@@ -39,20 +39,26 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    // Not banned
-    res.send({status : "failed", err : {"msg" : "Account is not listed"}}).end()
-    return;
+    // Is not banned --> create unique ID
+    let account_id = null;
+    while(account_id == null || await mongodb.findOneInCollection("account_info", {"_id" : account_id}))
+      account_id = Math.floor(Math.random() * Math.floor(10000000))
+
+    // Insert in account_info
+    account_info = {"_id" : account_id, "name" : username};
+    await mongodb.insertOne("account_info", account_info)
+      .catch(err => {
+        // Something failed
+        res.send({status : "failed", msg : "The database operation returned an error", err : err}).end()
+    })
   }
 
   // Find account maybe in account_data
   const account_data = await mongodb.findOneInCollection("account_data", {"_id" : account_info._id})
   if(account_data == null) {
-    res.send({status : "failed", msg : "Account is not analyzed"}).end()
+    res.send({status : "failed",  msg : "You have to accept our Policy!"}).end()
     return;
   }
-  let loading = false;
-  if(account_data.loading && account_data.loading != false)
-    loading = true;
 
   // Get profile ==> (categories/langs)
   const get_profile = async () => {
@@ -120,13 +126,12 @@ router.get('/', async (req, res) => {
       else{
         // Add element-wise
         for(let i=0; i < filtered_categories.length; i++)
-          filtered_categories[i] += item[i]
+          filtered_categories[i] += item[i] / categories.length;
       }
     })
-    total = filtered_categories.reduce((pv, cv) => pv + cv, 0);
     categories = [];
     for(let i=0; i < filtered_categories.length; i++)
-      categories.push({label : config.CATEGORIES[i][0], value : (filtered_categories[i] / total)})
+      categories.push({label : config.CATEGORIES[i][0], value : (filtered_categories[i])})
     
     categories.sort((a, b) => {
       // Custom sort by value
@@ -141,96 +146,32 @@ router.get('/', async (req, res) => {
     return {languages : langs, categories : categories, elements : elements}
   }
 
-  res.send({status : "ok", msg : "Account is available", loading : loading, profile : (await get_profile())}).end()
+  res.send({status : "ok", msg : "Account is available", profile : (await get_profile())}).end()
 })
 
-async function calcFeed(account_info, account_data, amount, abstraction_value, k = 7, posts = null, acc_ids = null){
-  let tasks_count = Math.max(Math.round(amount / k), 3); // Ensure to have at least 3 tasks running
-  posts = (posts || new Set([]));
+function calcFeed(account_id,  amount, abstraction_value){
+  // Request feed at CPP-NswAPI
+  let options = {
+    'method': 'POST',
+    'url': 'http://api.hive-discover.tech:' + process.env.Nsw_API_Port + '/feed',
+    'headers': {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      "account_id": account_id,
+      "amount": amount,
+      "abstraction_value": abstraction_value
+    })
   
-  // Find liked/own ids
-  if(acc_ids == null){
-    acc_ids = [];
+  };
 
-    await Promise.all([
-      // Account Posts
-      mongodb.findManyInCollection("post_info", {author : account_info.name}, {projection : {_id : 1}}).then(async (value) => {
-        // value == cursor
-        for await (const post of value)
-          acc_ids.push(post._id);
-      }),
-      // Account Votes
-      mongodb.findManyInCollection("post_data", {votes : account_info._id}, {projection : {_id : 1}}).then(async (value) => {
-        // value == cursor
-        for await (const post of value)
-          acc_ids.push(post._id);
-      }),
-    ]);
-  }
-
-  // Nothing to do
-  if(acc_ids.length == 0)
-    return [];
-  
-
-  // Get random (fully categorized) posts and create amable-db Bulk
-  const mongo_cursor = await mongodb.aggregateInCollection("post_data", [
-    {$match : { _id : {$in : acc_ids }, categories : {$ne : null}, categories : {$size : 46}}},
-    {$sample : {size : tasks_count} },
-    {$project : {categories : 1}}
-  ]);
-
-  let amable_bulk = [];
-  for await(const post of mongo_cursor){
-    amable_bulk.push({
-      method : "/select",
-      value : {
-        "query": {
-          "#similar": {
-            "fieldName": "categories",
-            "k": k + abstraction_value,
-            "value": post.categories
-          }
-        },
-        "projection" : {"id" : 1},
-        "collection": "post_cats"
-      }
+  return new Promise((resolve, reject) => {
+    request(options, (error, response) => {
+      if (error) throw new Error(error);
+      let body = JSON.parse(response.body);
+      resolve(body.posts.map(item => {return parseInt(item, 10)}));
     });
-  }
-
-  // Perform bulk and iterate all cursors
-  const amable_cursors = await amabledb.bulk(amable_bulk);
-  let tasks = [];
-  for(const cursor of amable_cursors){
-    if(cursor.status !== "ok")
-      continue;
-
-    tasks.push(new Promise(async (resolve, reject) => {
-      // Add all posts
-      for await ({item} of amabledb.getCursorItems(cursor))
-        posts.add(item.id);
-      resolve();
-    }));
-  }
-
-  // Wait for all
-  await Promise.all(tasks); 
-
-  // Convert Set to list and remove already seen ones (ids in acc_ids)
-  posts = [...posts].filter(value => {return !acc_ids.includes(value)});
-
-  // To less items 
-  if (posts.length < amount) {
-    // ==> do the same recursivly with increased k
-    // Runs until enough posts were found (k always increses)
-    return (await calcFeed(account_info, account_data, amount, abstraction_value, k + 5, new Set(posts), acc_ids));
-  } 
-
-  // To many items
-  while (posts.length > amount)
-    posts.splice(Math.floor(posts.length * Math.random()), 1);
-
-  return posts;
+  });
 }
 
 router.get('/feed', async (req, res) => {
@@ -286,7 +227,9 @@ router.get('/feed', async (req, res) => {
   // Get account_data
   let account_data = await mongodb.findOneInCollection("account_data", {"_id" : account_info._id});
   if(account_data == null){
-    // If not inside --> add and make analyze request
+    // If not inside --> not accepted policy
+    res.send({status : "failed", msg : "You have to accept our Policies!"}).end()
+    return;
     account_data = {"_id" : account_info._id, analyze : true}
     await mongodb.insertOne("account_data", account_data)
       .catch(err => {
@@ -295,8 +238,9 @@ router.get('/feed', async (req, res) => {
       })
   }
 
+  // account_info, account_data exists and he accepted the privacy policy
   // Get Feed
-  let posts = await calcFeed(account_info, account_data, amount, abstraction_value);
+  let posts = await (calcFeed(account_info._id, amount, abstraction_value));
   
   // Check if full_data, else get only authorperm (Order does not matter)
   if(full_data){
