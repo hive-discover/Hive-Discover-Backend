@@ -3,9 +3,9 @@ HOST_PORT = 888
 
 WORD2VEC_MODEL_PATH = "data/word2vec.gen"
 FASTTEXT_MODEL_PATH = "data/fasttext/fasttext_gensim.model"
-TEXTCNN_MODEL_PATH = "data/fasttext/TextCNN_best.pt"
+TEXTCNN_MODEL_PATH = "data/TextCNN_Model_7.pt" 
 LANG_FASTTEXT_MODEL = "data/fasttext-lang.ftz"
-
+FAKENEWSCNN_MODEL_PATH = "data/FakeNewsCNN.pt"
 
 MIN_KNOWN_WORDS = 8
 

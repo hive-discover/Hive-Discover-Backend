@@ -2,7 +2,7 @@ import asyncio, time
 import json
 import math
 import requests
-from datetime import timezone, timedelta
+from datetime import timezone, timedelta, datetime
 import sys, os
 sys.path.append(os.getcwd() + "/.")
 
@@ -17,49 +17,36 @@ from pymongo import UpdateMany, UpdateOne
 import nltk
 from nltk.corpus import stopwords
 
-from network import TextCNN
+from network import TextCNN, FakeNewsCNN
 from config import *
 from helper import helper, Lemmatizer
 from database import MongoDBAsync
 
 class statics:
     TEXT_CNN : TextCNN = None
+    FAKENEWS_CNN : FakeNewsCNN = None
     LMZT : Lemmatizer = None
+    Unknown_Tokens : list = []
     Bulk_PostData_Updates : list = []
     Bulk_PostText_Updates : list = []
-    AmableDB_Inserts = []
 
-AMABLE_DB_URL = f"http://api.hive-discover.tech:{AMABLE_DB_Port}"
 
-# amableDB Operations
-async def perform_amabledb_inserts():
-    '''Insert Docs into AmableDB'''
-    if len(statics.AmableDB_Inserts) == 0:
-        return
-
-    # Prepare Request
-    posts_count = len(statics.AmableDB_Inserts)
-    payload = {"post_cats" : statics.AmableDB_Inserts}
-    statics.AmableDB_Inserts = []
-
-    # Make Create-Request
-    async with aiohttp.ClientSession(headers={'Content-Type': 'application/json'}) as session:
-        async with session.post(AMABLE_DB_URL + "/create", json=payload) as response:
-            if not response or response.status != 200:
-                print("[Failed] Cannot insert {posts_count} documents into amabledb!")
-                print(response.status)
-                print(await response.text())
-                await asyncio.sleep(5)
-                exit()
-            else:
-                print(f"[Success] entered {posts_count} posts in amableDB")
-
-  
+        
+# Inits  
 def load_models() -> None:
     '''Load TextCnn and lmtz'''
     statics.TEXT_CNN, loaded = TextCNN.load_model()
-    statics.LMZT = Lemmatizer()
     print(f"Loaded TextCNN from Disk? - {loaded}")
+
+    statics.FAKENEWS_CNN, loaded = FakeNewsCNN.load_model()
+    print(f"Loaded FakeNewsCNN from Disk? - {loaded}")
+
+    statics.LMZT = Lemmatizer()
+    
+async def get_unknown_tokens() -> None:
+    vectors = await get_word_vectors(["(", "unknown", ")"])
+    statics.Unknown_Tokens = [vectors["("], vectors["unknown"], vectors[")"]]
+
 
 def remove_stopwords(tok_body : list) -> str:
     if not tok_body or len(tok_body) == 0:
@@ -95,17 +82,12 @@ async def get_word_vectors(tok_body : list) -> list:
             # Got everything
             server_vectors = data["vectors"]
 
-    # Decode vectors and map them as an ordered list
-    vectors = []    
-    for word in tok_body:
-        # Check if the word is available as a vector
-        if word in server_vectors:
-            d_bytes = base64.b64decode(server_vectors[word])
-            vectors.append(np.frombuffer(d_bytes, dtype=np.float64))
+    # Decode vector map
+    for word in server_vectors.keys():
+        d_bytes = base64.b64decode(server_vectors[word])
+        server_vectors[word] = np.frombuffer(d_bytes, dtype=np.float64)
 
-
-    return vectors
-
+    return server_vectors
 
 async def process_one_post(post : dict) -> None:
     # Prepare, Tokenize and Vectorize Text
@@ -118,40 +100,65 @@ async def process_one_post(post : dict) -> None:
         text += post["tags"]
     text = helper.pre_process_text(text, lmtz=statics.LMZT)
     tok_text = helper.tokenize_text(text)
-    vectors = await get_word_vectors(tok_text)
+    vector_map = await get_word_vectors(tok_text)
 
-    # Calculate Category-Values
+    doc_vector = []
+    vectors = []
+
+    # Transform vector map to an ordered list word by word + unknown tokens
+    known_tokens, unknown_tokens = 0, 0
+    for word in tok_text:
+        if word in vector_map:
+            # Known Token
+            vectors.append(vector_map[word])
+            doc_vector.append(vector_map[word])
+            known_tokens += 1
+        else:
+            # Unknown Token
+            vectors += statics.Unknown_Tokens
+            unknown_tokens += 1
+    
+    # Calc doc_vector by summing all known tokens and calc average
+    doc_vector = (np.sum(doc_vector, axis=0) / known_tokens).tolist()
+ 
     if len(vectors) < MIN_KNOWN_WORDS:
         # Not enough words
         categories = False
+        fakenews_prob = False
     else:
-        # DO AI
+        # Calculate categories
         _input = T.Tensor([vectors]) # _input.shape = [Batch-Dim, Word, Vectors]
         _output = statics.TEXT_CNN(_input) # _output.shape = [Batch-Dim, Categories] 
         categories = _output.data[0].tolist()
+            
+
+        # Calculate fakenews_prob
+        _input = T.Tensor([vectors]) # _input.shape = [Batch-Dim, Word, Vectors]
+        _output = statics.FAKENEWS_CNN(_input) 
+        fakenews_prob = _output.data[0].tolist()[0] # fakenews = [1, 0] | realnews = [0, 1]
+
 
     # post_data Update
     statics.Bulk_PostData_Updates.append(
-        UpdateOne({"_id" : post["_id"]}, {"$set" : {"categories" : categories}})
+        UpdateOne({"_id" : post["_id"]}, {"$set" : {
+            "categories" : categories, 
+            "doc_vector" : doc_vector, 
+            "fakenews_prob" : fakenews_prob,
+            "tokens" : { "known" : known_tokens, "unknown" : unknown_tokens }
+            }
+        })
     )
 
-    # post_text Update
-    statics.Bulk_PostText_Updates.append(
-        UpdateOne({"_id" : post["_id"]}, {"$set" : {"body" : remove_stopwords(tok_text)}})
-    )
-
-    # amableDB Insert with TTL settings
-    sevendays_later = post["timestamp"] + timedelta(days=10)
-    sevendays_later = sevendays_later.replace(tzinfo=timezone.utc)
-    sevendays_later = math.ceil(sevendays_later.timestamp()) # seconds from 1970
-    statics.AmableDB_Inserts.append({"id" : post["_id"], "categories" : categories, "&ttl" : sevendays_later})
 
 async def run(BATCH_SIZE : int = 25) -> None:
     # Init
     nltk.download("stopwords")
     load_models()
     MongoDBAsync.init_global(post_table=True)
+
+    await get_unknown_tokens()  
     helper.init()
+    
 
     AGGREGATION_PIPELINE = [
         {"$match" : {"categories" : None, "lang.lang" : "en"}},
@@ -200,19 +207,20 @@ async def run(BATCH_SIZE : int = 25) -> None:
                 return
 
             try:
-                await MongoDBAsync.post_data.bulk_write(statics.Bulk_PostText_Updates, ordered=False)
+                await MongoDBAsync.post_text.bulk_write(statics.Bulk_PostText_Updates, ordered=False)
             except BulkWriteError as ex:
                 print("Error on BulkWrite for post_text:")
                 print(ex)
             statics.Bulk_PostText_Updates = []
 
         # Do all updates
-        await asyncio.wait([doPostDataUpdate(), doPostTextUpdate(), perform_amabledb_inserts()])
+        await asyncio.wait([doPostDataUpdate(), doPostTextUpdate()])
             
-        # Wait a bit (if tasks was not full ==> relax CPU)
+        # Wait a bit (if tasks was not full ==> relax CPU and repair)
         print(f"Tasks ran: {len(tasks)}")   
-        if len(tasks) >= BATCH_SIZE:
+        if len(tasks) < BATCH_SIZE:
             await asyncio.sleep(60)
+            
 
 def start() -> None:
     event_loop = asyncio.get_event_loop()

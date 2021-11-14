@@ -17,7 +17,7 @@ motor==2.3.1
 bs4==0.0.1
 hivesigner==0.1.3
 torch==1.9.0
-torchvision==0.7.0
+torchvision
 gensim==3.8.3
 python-dotenv==0.15.0
 streamlit==0.88.0

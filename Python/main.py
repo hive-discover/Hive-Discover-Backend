@@ -7,20 +7,12 @@ from datetime import datetime
 # Arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("-all", "--all", help="start all processes", action="store_true")
-parser.add_argument("-api", "--api", help="start api", action="store_true")
-parser.add_argument("-nmslib", "--nmslib", help="start nmslib API", action="store_true")
-parser.add_argument("-a", "--analyze", help="start Account Analyzer", action="store_true")
-parser.add_argument("-cl", "--chainlistener", help="start Chain Listener Process", action="store_true")
 parser.add_argument("-ld", "--langdetector", help="start Lang Detector", action="store_true")
 parser.add_argument("-c", "--categorizer", help="start Posts Categorizer", action="store_true")
 parser.add_argument("-b", "--bot", help="start Bot", action="store_true")
 
 
 #   ***  Available methods:
-#   (app.start_server, "API Process", True)
-#   (feed_making.start, "Feed Maker Process", True)
-#   (account_analyzer.start, "Account Analyzer Process", True)
-#   (listener.start_listener, "Chain Listener Process", True)
 #   (lang_detector.start, "Posts Lang Detector Process", True)
 #   (categorizer.start, "Posts Categorizer Process", True)
 #   (bot.start, "Bot Process", True)
@@ -35,18 +27,6 @@ process_running = [] # Process()
 def main():
    # Make template
    args = parser.parse_args()
-   if args.api or args.all:
-      from api import app
-      process_templates.append((app.start_server, "API Process", True))
-   if args.nmslib or args.all:
-      from nmslib_api.app import start_server
-      process_templates.append((start_server, "NMSLIB API Process", False))
-   if args.analyze or args.all:
-      from account_tasks import account_analyzer
-      process_templates.append((account_analyzer.start, "Account Analyzer Process", True))
-   if args.chainlistener or args.all:
-      from chain_listener import listener
-      process_templates.append((listener.start_listener, "Chain Listener Process", True))
    if args.langdetector or args.all:
       from posts_analyzer import lang_detector
       process_templates.append((lang_detector.start, "Posts Lang Detector Process", True))
@@ -88,6 +68,7 @@ def main():
    
    stop_event.set()
    print("Good bye")
+   exit(1)
 
 
 if __name__ == '__main__':

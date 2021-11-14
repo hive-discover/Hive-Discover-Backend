@@ -21,11 +21,12 @@ class TextCNN(nn.Module):
         super(TextCNN, self).__init__()      
                       
         self.convs = nn.ModuleList([
-                            nn.Conv2d(1, KERNEL_NUM, (i, EMBEDDING_DIM)) for i in WINDOW_SIZES ])
-        self.dropout = nn.Dropout(0.15)
+                          nn.Conv2d(1, KERNEL_NUM, (i, EMBEDDING_DIM)) for i in WINDOW_SIZES ])
+        self.dropout = nn.Dropout(0.25)
         
         self.fc1 = nn.Linear(KERNEL_NUM * len(WINDOW_SIZES), KERNEL_NUM)
-        self.fc2 = nn.Linear(KERNEL_NUM, len(CATEGORIES))
+        self.fc2 = nn.Linear(KERNEL_NUM, KERNEL_NUM)
+        self.fc3 = nn.Linear(KERNEL_NUM, len(CATEGORIES))
         self.relu = nn.ReLU()
 
     def forward(self, x): 
@@ -38,14 +39,15 @@ class TextCNN(nn.Module):
             x2 = self.dropout(x2)
             xs.append(x2)
         x = T.cat(xs, 2)
-        
-        # FC1
+
+        # FC1 and FC2
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
 
-        # FC2
-        x = self.fc2(x)
-        x = F.softmax(x, dim = 1)
+        # FC3
+        x = self.fc3(x)
+        x = T.sigmoid(x)
         return x
 
     @staticmethod
@@ -90,6 +92,55 @@ class LangDetector():
 
 
         return [{"lang" : label, "x" : score} for label, score in predictions]
+
+class FakeNewsCNN(nn.Module):
+    def __init__(self):
+        super(FakeNewsCNN, self).__init__()      
+                        
+        self.convs = nn.ModuleList([
+                            nn.Conv2d(1, KERNEL_NUM, (i, EMBEDDING_DIM)) for i in WINDOW_SIZES ])
+        self.dropout = nn.Dropout(0.25)
+        
+        self.fc1 = nn.Linear(KERNEL_NUM * len(WINDOW_SIZES), KERNEL_NUM)
+        self.fc2 = nn.Linear(KERNEL_NUM, int(KERNEL_NUM / 2))
+        self.fc3 = nn.Linear(int(KERNEL_NUM / 2), 2)
+        self.relu = nn.ReLU()
+
+    def forward(self, x): 
+        # Convs Layer
+        xs = []
+        for conv in self.convs:
+            x2 = T.tanh(conv(x.unsqueeze(1)))
+            x2 = T.squeeze(x2, -1)
+            x2 = F.max_pool1d(x2, x2.size(2))
+            x2 = self.dropout(x2)
+            xs.append(x2)
+        x = T.cat(xs, 2)
+
+        # FC1 and FC2
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+
+        # FC3
+        x = self.fc3(x)
+        x = F.softmax(x, dim = 1)
+        return x
+
+    staticmethod
+    def load_model() -> tuple:
+        '''
+            Loads the FakeNewsCNN Model. Also from Disc (when available -> from_disc=true)
+            Returns: tuple ( model : FakeNewsCNN, from_disc : bool )
+        '''
+        model = FakeNewsCNN()
+        from_disc = False
+        if os.path.exists(FAKENEWSCNN_MODEL_PATH):
+            model.load_state_dict(T.load(FAKENEWSCNN_MODEL_PATH))
+            from_disc = True
+
+        return (model, from_disc)
+
 
 
         
