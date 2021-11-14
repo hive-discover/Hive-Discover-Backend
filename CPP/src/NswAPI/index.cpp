@@ -24,13 +24,13 @@ namespace NswAPI {
 		const int account_id,
 		const int abstraction_value,
 		const int amount,
-		std::set<int>& post_results
+		std::unordered_set<int>& post_results
 	) {
-		// Get account-activities and langs
+		// Get account-activities
 		std::vector<int> post_ids, vote_ids;
 		User::Account::getActivities(account_id, post_ids, vote_ids);
-		bsoncxx::builder::basic::array acc_langs;
-		User::Account::getLangs(account_id, acc_langs, post_ids, vote_ids);
+		if (post_ids.size() == 0 && vote_ids.size() == 0)
+			return; // Nothing available
 
 		std::set<int> account_activities(post_ids.begin(), post_ids.end());
 		account_activities.insert(vote_ids.begin(), vote_ids.end());
@@ -46,11 +46,13 @@ namespace NswAPI {
 			const size_t batchCount = std::min(max_account_activities, 25);
 			bsoncxx::builder::basic::array batchIDs;
 			{
-				std::set<int> rndIndexes; // get random Indexes
+				// get random Indexes
+				std::set<int> rndIndexes;
 				for (size_t i = 0; i < batchCount; ++i)
 					rndIndexes.insert(std::rand() % max_account_activities);
 
-				auto it = account_activities.begin(); // Select them
+				// Select them
+				auto it = account_activities.begin();
 				for (size_t i = 0; i < max_account_activities; ++i)
 				{
 					if (rndIndexes.count(i))
@@ -63,7 +65,7 @@ namespace NswAPI {
 			// Get categories of them
 			std::vector<std::vector<float>> batchCategories;
 			batchCategories.reserve(batchCount);
-			{			
+			{
 				auto cursor = post_data.find(make_document(kvp("_id", make_document(kvp("$in", batchIDs)))));
 				for (const auto& document : cursor) {
 					const auto elemCategories = document["categories"];
@@ -81,43 +83,43 @@ namespace NswAPI {
 					batchCategories.push_back(data);
 				}
 			}
-				
+
 			// Get similar Posts and reshape from 2d to 1d (flatten)
-			bsoncxx::builder::basic::array batchResults;
+			std::set<int> results;
 			{
 				// Search
-				std::vector<std::vector<int>> results;
-				getSimilarPostsByCategory(batchCategories, abstraction_value + 5 + loop_counter, results);
+				const int k = abstraction_value + 5 + loop_counter;
+				std::vector<std::vector<int>> all_results;
+				getSimilarPostsByCategory(batchCategories, k, all_results);
 
-				// Now flatten the 2d results
-				for (const auto& r_item : results) {
-					for (auto it = r_item.begin(); it != r_item.end(); ++it)
-						batchResults.append(*it);
-				}
+				// Flatten the 2d results			
+				for (const auto& r_item : all_results)
+					results.insert(r_item.begin(), r_item.end());
+
 			}
-			
-			// Check languages and if they are good, insert into post_results
-			if (batchResults.view().length()) {
-				auto cursor = post_data.find(make_document(
-					kvp("_id", make_document(
-						kvp("$in", batchResults))
-					),
-					kvp("lang", make_document(
-						kvp("$elemMatch", make_document(
-							kvp("lang", make_document(
-								kvp("$in", acc_langs)
-							))
-						))
-					))
-				));
 
-				// Only returns good ones
-				for (const auto& document : cursor) {
-					int docID = document["_id"].get_int32().value;
-					if(!account_activities.count(docID))
-						post_results.insert(docID);
+			// We do not have to check langs, because only english posts are categorized and in our Index
+			// Check languages and if they are good, insert into post_results
+
+			// Insert in post_results
+			if (results.size() + post_results.size() <= amount) {
+				// Insert all Items, it is (maybe not) enough
+				post_results.insert(results.begin(), results.end());
+			}
+			else {
+				// Insert Random Elements
+				// Get random Indexes
+				const int rndElementsCount = amount - post_results.size();
+				std::set<int> rndIndexes = {};
+				while (rndIndexes.size() < rndElementsCount)
+					rndIndexes.insert(std::rand() % results.size());
+
+				// Insert these randoms Elements
+				size_t counter = 0;
+				for (auto it = results.begin(); it != results.end(); ++it, ++counter) {
+					if (rndIndexes.count(counter)) // Random Index reached ==> insert
+						post_results.insert(*it);
 				}
-					
 			}
 
 			// Next round
@@ -209,7 +211,7 @@ namespace NswAPI {
 		while (1) {
 			buildIndex();
 
-			std::this_thread::sleep_for(std::chrono::minutes(10));
+			std::this_thread::sleep_for(std::chrono::minutes(15));
 		}
 	}
 

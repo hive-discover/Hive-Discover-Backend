@@ -42,7 +42,6 @@ namespace User {
 
 				// Get all posts written by him
 				bsoncxx::v_noabi::document::view_or_value findQuery = { make_document(kvp("author", account_name)) };
-				post_ids.reserve(post_ids.size() + post_info.count_documents(findQuery));
 				auto cursor = post_info.find(findQuery);
 
 				// Retrieve Ids, where categories is not null
@@ -61,7 +60,6 @@ namespace User {
 				bsoncxx::v_noabi::document::view_or_value findQuery = make_document(kvp("votes", account_id));
 
 				// Get all votes
-				votes_ids.reserve(votes_ids.size() + post_data.count_documents(findQuery));
 				auto cursor = post_data.find(findQuery);
 
 				// Retrieve Ids, where categories is not null
@@ -73,6 +71,53 @@ namespace User {
 
 				});
 		
+			// wait for both to complete
+			if (post_getter.joinable())
+				post_getter.join();
+			if (vote_getter.joinable())
+				vote_getter.join();
+		}
+
+		void getActivitiesCount(
+			const int account_id, 
+			int& post_count, 
+			int& vote_count
+		) {
+			std::thread post_getter([account_id, &post_count]() {
+				// Get a connection
+				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
+				auto post_info = (*client)["hive-discover"]["post_info"];
+				auto account_info = (*client)["hive-discover"]["account_info"];
+
+				// Find account_name
+				bsoncxx::stdx::optional<bsoncxx::document::value> maybe_doc = account_info.find_one(
+					{ make_document(kvp("_id", account_id)) }
+				);
+				if (!maybe_doc)
+					return; // Cannot find account
+
+				//const auto account_document = maybe_doc->view();
+				//auto account_name = account_document["name"].get_utf8().value;
+
+				// Get count of all posts written by him
+				bsoncxx::v_noabi::document::view_or_value findQuery = { 
+					make_document(
+						kvp("author", maybe_doc->view()["name"].get_utf8().value)
+					) 
+				};
+				post_count = post_info.count_documents(findQuery);
+			});
+
+			std::thread vote_getter([account_id, &vote_count]() {
+				// Prepare connection
+				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
+				auto post_data = (*client)["hive-discover"]["post_data"];
+				bsoncxx::v_noabi::document::view_or_value findQuery = make_document(kvp("votes", account_id));
+
+				// Get count of all votes
+				vote_count = post_data.count_documents(findQuery);		
+			});
+
 			// wait for both to complete
 			if (post_getter.joinable())
 				post_getter.join();

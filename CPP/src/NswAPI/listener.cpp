@@ -37,7 +37,7 @@ namespace NswAPI {
 						abstraction_value = std::min(100, reqBody["abstraction_value"].get<int>());
 
 					// Get feed
-					std::set<int> post_results;
+					std::unordered_set<int> post_results;
 					NswAPI::makeFeed(account_id, abstraction_value, amount, post_results);
 
 					// Enter feed

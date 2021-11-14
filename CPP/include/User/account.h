@@ -14,6 +14,12 @@ namespace User {
 			std::vector<int>& votes_ids
 		);
 
+		void getActivitiesCount(
+			const int account_id,
+			int& post_count, 
+			int& vote_count
+		);
+
 		void getLangs(
 			const int account_id,
 			bsoncxx::builder::basic::array& accLangs,

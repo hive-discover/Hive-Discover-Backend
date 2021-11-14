@@ -10,7 +10,7 @@ namespace NswAPI {
 		const int account_id,
 		const int abstraction_value,
 		const int amount,
-		std::set<int>& post_results
+		std::unordered_set<int>& post_results
 	);
 
 	void getSimilarPostsByCategory(
