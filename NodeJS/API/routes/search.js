@@ -345,7 +345,7 @@ router.post('/similar', async (req, res) => {
   }
 
   // Check if redis cached this query
-  let redis_key_name = "search-similar-post-" + author + "-" + permlink;
+  let redis_key_name = "search-similar-post-" + author + "-" + permlink + "-" + amount.toString();
   let task = new Promise((resolve, reject) => {
     config.redisClient.get(redis_key_name, async (err, reply) => {
       if(err) // We got an Error (can be ignored because it is just cache)
