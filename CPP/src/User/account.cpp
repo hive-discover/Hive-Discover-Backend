@@ -28,6 +28,64 @@ namespace User {
 				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 				auto post_info = (*client)["hive-discover"]["post_info"];
 				auto account_info = (*client)["hive-discover"]["account_info"];
+				
+				// Aggregation Pipeline building
+				mongocxx::pipeline agg_p{};
+				{
+					// Get account_name from account_id
+					agg_p.match(make_document(kvp("_id", account_id)));
+
+					// Lookup post_info (posts, who he is the author)
+					agg_p.lookup(make_document(
+						kvp("from", "post_info"),
+						kvp("localField", "name"),
+						kvp("foreignField", "author"),
+						kvp("as", "posts")
+					));
+
+					// Lookup post_data (categories)
+					agg_p.lookup(make_document(
+						kvp("from", "post_data"),
+						kvp("localField", "posts._id"),
+						kvp("foreignField", "_id"),
+						kvp("as", "posts")
+					));
+
+					// Chance projection to only have ids and categories
+					agg_p.project(make_document(
+						kvp("posts", make_document(
+							kvp("_id", 1),
+							kvp("categories", 1)
+						)
+						)
+					));
+
+					// Unwind to get individual documents 
+					agg_p.unwind(make_document(
+						kvp("path", "$posts"),
+						kvp("preserveNullAndEmptyArrays", false)
+					));
+
+					// Match to filter not-analyzed posts out
+					agg_p.match(make_document(
+						kvp("posts.categories", make_document(
+							kvp("$ne", NULL))
+						)
+					));
+
+					// Chance projection to only have account_id and post_id and
+					agg_p.project(make_document(
+						kvp("name", 1),
+						kvp("post_id", "$posts._id")
+					));
+				}
+
+				// Retrieve documents from agg-pipeline and push them
+				auto agg_cursor = account_info.aggregate(agg_p, mongocxx::options::aggregate{});
+				for (auto& document : agg_cursor)
+					post_ids.push_back(document["post_id"].get_int32().value);
+
+				return;
 
 				// Find account_name
 				bsoncxx::stdx::optional<bsoncxx::document::value> maybe_doc = account_info.find_one(
@@ -52,12 +110,15 @@ namespace User {
 				}
 
 				});
-				
+			
 			std::thread vote_getter([account_id, &votes_ids]() {
 				// Prepare connection
 				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 				auto post_data = (*client)["hive-discover"]["post_data"];
-				bsoncxx::v_noabi::document::view_or_value findQuery = make_document(kvp("votes", account_id));
+				bsoncxx::v_noabi::document::view_or_value findQuery = make_document(
+					kvp("votes", account_id),
+					kvp("categories", make_document(kvp("$ne", NULL)))
+				);
 
 				// Get all votes
 				auto cursor = post_data.find(findQuery);
@@ -70,7 +131,7 @@ namespace User {
 				}
 
 				});
-		
+
 			// wait for both to complete
 			if (post_getter.joinable())
 				post_getter.join();
@@ -172,5 +233,6 @@ namespace User {
 					accLangs.append(item.first);
 			}
 		}
+
 	}
 }
