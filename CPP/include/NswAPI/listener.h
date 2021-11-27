@@ -17,6 +17,8 @@ namespace NswAPI {
 		void similar_by_category(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request);
 
 		void similar_by_permlink(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request);
+
+		void similar_accounts(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request);
 	}
 
 	namespace Listener {

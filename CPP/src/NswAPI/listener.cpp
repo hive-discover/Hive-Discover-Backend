@@ -79,7 +79,7 @@ namespace NswAPI {
 
 					// Search them
 					std::vector<std::vector<int>> results;
-					getSimilarPostsByCategory({ categories }, amount, results);
+					Categories::getSimilarPostsByCategory({ categories }, amount, results);
 
 					// Return Ids
 					resBody["status"] = "ok";
@@ -160,7 +160,7 @@ namespace NswAPI {
 
 					// Search similars
 					std::vector<std::vector<int>> results;
-					getSimilarPostsByCategory({ categories }, amount, results);
+					Categories::getSimilarPostsByCategory({ categories }, amount, results);
 
 					// Return Ids
 					resBody["status"] = "ok";
@@ -183,6 +183,81 @@ namespace NswAPI {
 				}, response, request).detach();
 		}
 		
+		void similar_accounts(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+			std::thread([](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+				nlohmann::json reqBody, resBody;
+
+				try {
+					// Parse request Body			
+					Helper::parseBody(request, reqBody);
+					if (!reqBody.count("account_name") && !reqBody.count("account_id"))
+						throw std::runtime_error("no account_name and no account_id found");
+					if (!reqBody.count("amount"))
+						throw std::runtime_error("amount not found");
+					const size_t amount = reqBody["amount"].get<size_t>();
+
+					auto client = GLOBAL::MongoDB::mongoPool.acquire();
+					auto account_info = (*client)["hive-discover"]["account_info"];
+
+					// Find that account_interests
+					bsoncxx::document::view_or_value find_query;
+					if (reqBody.count("account_name")) {
+						// Use name
+						find_query = bsoncxx::builder::basic::make_document(
+							bsoncxx::builder::basic::kvp("name", reqBody["account_name"].get<std::string>())
+						);
+					}
+					else {
+						// Use _id
+						find_query = bsoncxx::builder::basic::make_document(
+							bsoncxx::builder::basic::kvp("_id", reqBody["account_id"].get<std::string>())
+						);
+					}
+
+					bsoncxx::stdx::optional<bsoncxx::document::value> maybe_doc = account_info.find_one(find_query);
+					if (!maybe_doc)
+						throw std::runtime_error("Account cannot be found");
+					bsoncxx::v_noabi::document::view account_document = maybe_doc->view();
+					if(account_document.find("interests") == account_document.end())
+						throw std::runtime_error("Account has no Votes");
+
+					// Parse Interests-Vector
+					std::vector<float> interests(46);
+					{
+						const bsoncxx::document::element elemInterests = account_document["interests"];
+						if (elemInterests.type() != bsoncxx::type::k_array)
+							throw std::runtime_error("Post not analyzed");
+
+						const bsoncxx::array::view account_interests{ elemInterests.get_array().value };
+						auto d_it = interests.begin();
+						for (auto c_it = account_interests.begin(); c_it != account_interests.end(), d_it != interests.end(); ++d_it, ++c_it)
+							*d_it = c_it->get_double().value;
+					}
+
+					// Search similar account_ids
+					std::vector<std::vector<int>> results;
+					Accounts::getSimilarAccounts({ interests }, amount, results);
+
+					// Return Ids
+					resBody["status"] = "ok";
+					resBody["accounts"] = {};
+					if (results.size()) {
+						// We got a result
+						for (size_t i = 0; i < results[0].size(); ++i)
+							resBody["accounts"][std::to_string(i)] = results[0][i];
+					}
+
+
+					Helper::writeJSON(response, resBody);
+				}
+				catch (std::exception ex) {
+					std::cout << "[ERROR] Exception raised at similar-accounts: " << ex.what() << std::endl;
+					resBody["status"] = "failed";
+					resBody["error"] = ex.what();
+					Helper::writeJSON(response, resBody, "500");
+				}
+				}, response, request).detach();
+		}
 	}
 
 	namespace Listener {
@@ -195,6 +270,8 @@ namespace NswAPI {
 			server.resource["^/feed$"]["POST"] = feed;
 			server.resource["^/similar-category"]["POST"] = similar_by_category;
 			server.resource["^/similar-permlink"]["POST"] = similar_by_permlink;
+
+			server.resource["^/similar-accounts"]["POST"] = similar_accounts;
 		}
 
 		void startAPI() {

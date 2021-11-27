@@ -11,6 +11,10 @@ int main() {
 
 	NswAPI::start();
 
+	// Wait to not end this Process
+	while (!GLOBAL::STOP_PROCESS)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
 	std::cout << "[INFO] Terminating CPP-Backend" << std::endl;
 	return 0;
 }
