@@ -33,6 +33,7 @@ app.get('/stats', async (req, res) => {
     database : {
       accounts : 0, 
       posts : 0, 
+      current_block_num : 0,
       un_categorized : 0, 
       account_data : 0, 
       stats : 0, 
@@ -44,6 +45,7 @@ app.get('/stats', async (req, res) => {
   await Promise.all([
     new Promise(async (resolve) => { status_obj.database.accounts = await mongodb.countDocumentsInCollection("account_info", {}); resolve() }),
     new Promise(async (resolve) => { status_obj.database.posts = await mongodb.countDocumentsInCollection("post_info", {}); resolve() }),
+    new Promise(async (resolve) => { status_obj.database.current_block_num = (await mongodb.findOneInCollection("stats", {"tag" : "CURRENT_BLOCK_NUM"})).current_num || 0; resolve() }),
     new Promise(async (resolve) => { status_obj.database.un_categorized = await mongodb.countDocumentsInCollection("post_data", {categories : null}); resolve() }),
     new Promise(async (resolve) => { status_obj.database.account_data = await mongodb.countDocumentsInCollection("account_data", {}); resolve() }),
     new Promise(async (resolve) => { status_obj.database.stats = await mongodb.countDocumentsInCollection("stats", {}); resolve() }),
