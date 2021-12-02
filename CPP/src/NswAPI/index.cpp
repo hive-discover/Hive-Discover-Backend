@@ -149,12 +149,12 @@ namespace NswAPI {
 
 		//	* Account Interests Index
 		std::thread([]() {
-			// Build Index, then wait 20 Minutes and finally rebuild ALL profiles (long and intense calculation), that 
+			// Build Index, then wait one Hour and finally rebuild ALL profiles (long and intense calculation), that 
 			// is why we first wait and then do it because on startup we need performance for other ressources...
 
 			while (1) {
 				Accounts::buildIndex();
-				std::this_thread::sleep_for(std::chrono::minutes(20));
+				std::this_thread::sleep_for(std::chrono::hours(1));
 				Accounts::set_all_account_profiles();
 			}		
 		}).detach();
@@ -265,11 +265,12 @@ namespace NswAPI {
 			// Establish connection
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 			auto post_data = (*client)["hive-discover"]["post_data"];
+			mongocxx::options::find opts;
+			opts.projection(make_document(kvp("categories", 1)));
 			auto cursor = post_data.find(
 				make_document(
 					kvp("_id", make_document(kvp("$in", activity_ids)))
-				)
-			);
+			), opts);
 
 			// Enter all of them
 			std::vector<float> account_data(46);
@@ -298,6 +299,8 @@ namespace NswAPI {
 		}
 
 		void set_all_account_profiles() {
+			const auto t_start = std::chrono::high_resolution_clock::now();
+
 			// Get a connection
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 			auto collection = (*client)["hive-discover"]["account_info"];
@@ -306,77 +309,81 @@ namespace NswAPI {
 			mongocxx::options::find opts;
 			opts.projection(make_document(kvp("_id", 1)));
 			auto cursor = collection.find({}, opts);
-			std::stack<mongocxx::v_noabi::model::update_one> update_bulk;
-			std::mutex bulk_lock;
 
-			// Start task on all accounts
-			std::atomic<int> workers_count(0);
-			boost::asio::thread_pool th_pool(3);
-			for (const auto& account_doc : cursor) {
-				++workers_count;
-				const int account_id = account_doc["_id"].get_int32().value;
+			// Get all account ids
+			std::stack<int> all_accounts;
+			for (const auto& account_doc : cursor)
+				all_accounts.push(account_doc["_id"].get_int32().value);
+			const int account_count = all_accounts.size();
+			
+			// Bulk Settings
+			mongocxx::options::bulk_write bulkWriteOption;
+			bulkWriteOption.ordered(false);
+			const int BULK_SIZE = 25;
+			auto bulk_enter_task = std::async([]() {return true; }); // Create dummy task
 
-				// Producer-threads
-				boost::asio::post(th_pool,
-					[account_id, &update_bulk, &bulk_lock, &workers_count]() {
-						// Get acc profile
-						const std::vector<float> profile = calc_account_profile(account_id);
+			while (all_accounts.size()) {
+				std::map<int, std::future<std::vector<float>>> account_results; // id, result-future
 
-						if (profile.size()) {
-							// Convert std::vector to bson::array
-							bsoncxx::builder::basic::array barr_profile;
-							for (const auto& x : profile)
-								barr_profile.append(x);
+				// Fill results with tasks until max reaches or no accounts left
+				while (all_accounts.size() && account_results.size() < BULK_SIZE) {
+					const int acc_id = all_accounts.top();
+					account_results[acc_id] = std::async(calc_account_profile, acc_id);
+					all_accounts.pop();
+				}
 
-							// Create bulk-model
-							auto update_model = mongocxx::model::update_one(
-								make_document(kvp("_id", account_id)), // Filter
-								make_document(kvp("$set", make_document(kvp("interests", barr_profile)))) // Update
-							);
+				// Create bulk-operation and append results
+				// Shared Ptr because we later have to give it to a lambda function and by so, we do not have to copy it
+				size_t bulk_counter = 0;
+				std::shared_ptr<mongocxx::bulk_write> bulk = std::make_shared<mongocxx::bulk_write>(
+					collection.create_bulk_write(bulkWriteOption)
+				);
+				for (auto& result_pair : account_results) {
+					std::vector<float> interests = result_pair.second.get();
+					if (interests.size() == 0)
+						continue; // Nothing enterable
 
-							// Lock vector and push bulk-model
-							std::lock_guard<std::mutex> lock(bulk_lock);
-							update_bulk.push(update_model);
-						}
+					// Convert std::vector to bson::array
+					bsoncxx::builder::basic::array barr_profile;				
+					for (const auto& x : interests)
+						barr_profile.append(x);				
 
-						// Mark that we finished
-						--workers_count;
-					});
+					// Define update model and append it to the bulk
+					const auto update_model = mongocxx::model::update_one(
+						make_document(kvp("_id", result_pair.first)), // Filter
+						make_document(kvp("$set", make_document(kvp("interests", barr_profile)))) // Update
+					);
+					bulk->append(update_model);
+					++bulk_counter;
+				}
+
+				if (bulk_counter == 0)
+					continue; // No bulk has to be written
+
+				// Wait for last entering to have surely completed his task
+				bulk_enter_task.get();
+
+				// Restart task and redo whole loop
+				bulk_enter_task = std::async([bulk]() {
+					try {
+						// Perform bulk-update
+						bulk->execute();
+					}
+					catch (std::exception ex) {
+						std::cout << "[ERROR] Exception raised at set_all_account_profiles(): " << ex.what() << std::endl;
+					}
+
+					return true;
+				});
 			}
 
-			// Consumer-Task
-			while (workers_count > 0 || update_bulk.size() > 0) {
-				if (update_bulk.size() < 25 && workers_count > 0) {
-					// We can wait, some elements will also come
-					std::this_thread::sleep_for(std::chrono::milliseconds(250));
-					continue;
-				}
+			// Wait for the last task to finish as well
+			bulk_enter_task.get();
 
-				// we got enough to do ==> extract bulk-models
-				mongocxx::options::bulk_write bulkWriteOption;
-				bulkWriteOption.ordered(false);			
-				mongocxx::bulk_write bulk = collection.create_bulk_write(bulkWriteOption);
-
-				{
-					std::lock_guard<std::mutex> lock(bulk_lock); // locking
-					while (update_bulk.size()) {
-						// Insert elements into bulk-obj
-						bulk.append(update_bulk.top());
-						update_bulk.pop();
-					}						
-				}
-				
-				try {
-					// Perform bulk-update
-					bulk.execute();
-				}
-				catch (std::exception ex) {
-					std::cout << "[ERROR] Exception raised at set_all_account_profiles(): " << ex.what() << std::endl;
-				}
-				
-			}
-
-			th_pool.join(); // Useless, but to be sure that everything has finished
+			const auto t_end = std::chrono::high_resolution_clock::now();
+			const double elapsed_time_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+			const double elapsed_time_min = elapsed_time_ms / (1000 * 60); // 1min = 60sec = 6000ms | 1000ms = 1s
+			std::cout << "[INFO] Rebuild all " << account_count << " account interests in " << elapsed_time_min << " minutes." << std::endl;
 		}
 
 		void buildIndex() {

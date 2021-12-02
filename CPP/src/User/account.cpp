@@ -84,52 +84,29 @@ namespace User {
 				auto agg_cursor = account_info.aggregate(agg_p, mongocxx::options::aggregate{});
 				for (auto& document : agg_cursor)
 					post_ids.push_back(document["post_id"].get_int32().value);
-
-				return;
-
-				// Find account_name
-				bsoncxx::stdx::optional<bsoncxx::document::value> maybe_doc = account_info.find_one(
-					{ make_document(kvp("_id", account_id)) }
-				);
-				if (!maybe_doc)
-					return; // Cannot find account
-
-				const auto account_document = maybe_doc->view();
-				auto account_name = account_document["name"].get_utf8().value;
-
-
-				// Get all posts written by him
-				bsoncxx::v_noabi::document::view_or_value findQuery = { make_document(kvp("author", account_name)) };
-				auto cursor = post_info.find(findQuery);
-
-				// Retrieve Ids, where categories is not null
-				bsoncxx::document::element elemId;
-				for (const auto& post_item : cursor) {
-					if (post_item["categories"].type() == type::k_array)
-						post_ids.push_back(post_item["_id"].get_int32().value);
-				}
-
 				});
 			
 			std::thread vote_getter([account_id, &votes_ids]() {
-				// Prepare connection
+				// Establish connection
 				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 				auto post_data = (*client)["hive-discover"]["post_data"];
+				
+				// Define Query and Projection
 				bsoncxx::v_noabi::document::view_or_value findQuery = make_document(
 					kvp("votes", account_id),
 					kvp("categories", make_document(kvp("$ne", NULL)))
 				);
 
+				mongocxx::options::find opts{};
+				opts.projection(make_document(kvp("_id", 1)));
+
 				// Get all votes
-				auto cursor = post_data.find(findQuery);
+				auto cursor = post_data.find(findQuery, opts);
 
 				// Retrieve Ids, where categories is not null
 				bsoncxx::document::element elemId;
-				for (const auto& post_item : cursor) {
-					if (post_item["categories"].type() == type::k_array)
-						votes_ids.push_back(post_item["_id"].get_int32().value);
-				}
-
+				for (const auto& post_item : cursor) 
+					votes_ids.push_back(post_item["_id"].get_int32().value);
 				});
 
 			// wait for both to complete

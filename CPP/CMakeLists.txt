@@ -28,6 +28,7 @@ find_package(nlohmann_json REQUIRED)
 
 add_subdirectory("libs/Simple-Web-Server") 
 add_subdirectory("libs/hnswlib") 
+# add_subdirectory("libs/thread-pool") 
 
 # Add Source Files: all .cpp from /src...
 file(GLOB PROJECT_SRC src/*.cpp src/*/*.cpp src/*/*/*.cpp)
