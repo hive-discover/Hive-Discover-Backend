@@ -10,6 +10,7 @@ parser.add_argument("-all", "--all", help="start all processes", action="store_t
 parser.add_argument("-ld", "--langdetector", help="start Lang Detector", action="store_true")
 parser.add_argument("-c", "--categorizer", help="start Posts Categorizer", action="store_true")
 parser.add_argument("-b", "--bot", help="start Bot", action="store_true")
+parser.add_argument("-tm", "--test_modules", help="Test dependencies by importing all modules", action="store_true")
 
 
 #   ***  Available methods:
@@ -27,6 +28,12 @@ process_running = [] # Process()
 def main():
    # Make template
    args = parser.parse_args()
+   if args.test_modules or args.all:
+      print("Importing all modules...")
+      from posts_analyzer import lang_detector
+      from posts_analyzer import async_categorizer
+      from bot import ac_bot
+      print("All modules were imported successfully.")
    if args.langdetector or args.all:
       from posts_analyzer import lang_detector
       process_templates.append((lang_detector.start, "Posts Lang Detector Process", True))
