@@ -41,7 +41,16 @@ RANDOM_POSTS = [
     ("@mauromar", "/new-giant-leap-towards-fusion-energy-nuevo-paso-de-gigante-hacia-la-energia-de-fusion"),
     ("@jorgebgt", "/a-new-rotary-detonation-space"),
     ("@jorgebgt", "/etna-grows-fast-geological-processes"),
-    ("@mauromar", "/crispr-gene-editing-tool-successfully-tested-in-space-probada-con-exito-la-herramienta-de-edicion-genetica-crispr-en-el-espacio")
+    ("@mauromar", "/crispr-gene-editing-tool-successfully-tested-in-space-probada-con-exito-la-herramienta-de-edicion-genetica-crispr-en-el-espacio"),
+    # d.buzz Posts
+    ("@steemseph", "/8yy7drw59dc7mbgu0nxcpz"),
+    ("@progressivechef", "/h0hk7g6hm2bxv3g7lqtouj"),
+    ("@honeysaver", "/vryvpjtsfzxh6o3z6nfzff"),
+    ("@demotruk", "/ezeoxbpszlmcjcdsnsz6ji"),
+    ("@leveragetrading", "/s4zgi2w8d10ljrfjjx4nv0"),
+    ("@manniman", "/gut18vbs1m2e2lfq5k7rzf"),
+    ("@koenau", "/9a0go8dgkc1kfdh8bfaohe"),
+    ("@tdctunes", "/tp5o2stay8gvy93a5gg3m8"),
 ]
 
 
@@ -49,7 +58,7 @@ USER_INPUT = {
     "author" : "",
     "permlink" : "",
     "min_percentage" : 10,
-    "wordvec_url" : "https://api.hive-discover.tech:7879"
+    "wordvec_url" : "https://word2vec.hive-discover.tech"
 }
 
 # **********************************
@@ -58,37 +67,38 @@ USER_INPUT = {
 
 st.title("Categorizer Demonstration")
 st.caption("""
-Suchen Sie passende HIVE Beiträge und geben Sie dann den Author sowie den Permlink an. Das neuronales Netz startet danach die arbeitet!
+Search for content on HIVE and categorize it by our AI model. Just provide us the author and permlink in the left menu and we show what our AI thinks about that post!
 """)
 
 col_btn_instructions, col_btn_random_post = st.columns(2)
-btn_instruction = col_btn_instructions.button("Zeige Anleitung")
-btn_random_post = col_btn_random_post.button("Zufälliger Beitrag")
+btn_instruction = col_btn_instructions.button("Show Introduction")
+btn_random_post = col_btn_random_post.button("Random Post")
 
 if btn_instruction:
     # Show Instructions
-    st.write("### Anleitung")
+    st.write("### Introduction")
     st.write("""
-    Suche Sie auf den unten verlinkten Seiten nach englischen Posts. Es dürfen auch Beiträge sein die Bilingual sind, also halb Englisch und halb eine andere Sprache beinhalten.
-    Wenn Sie nun einen interessanten Artikel gefunden haben, können Sie dessen Author und Permlink rauskopieren und in der Sidebar einfügen. Die Informationen erhalten sie über die im Browser gezeigte URL. Ein Beispiel ist gegeben:
+    Below you can find some interesting topics for HIVE posts which can be categorized. In the best case, you enter english posts (because they are proceed at the best) but 
+    bilingual posts are also possible when they contain atleast some english content.
+    If you found something good, copy the author and permlink to our sidebar and the AI part begins. An example:
     """)
     st.write(f"**Author:** *@gaboamc2393*   **Permlink:** */new-cell-phone-and-pc-engesp*")
     st.image("webdemo/img/AuthorPermPeakd.JPG")
-    st.write("Hier können sie (beispielsweise) gute Artikel finden:")
+    st.write("Some good topics (example):")
     col_1, col_2, col_3 = st.columns(3)
-    col_1.write(" - [Technik](https://peakd.com/trending/tech)")
-    col_2.write(" - [Kunst](https://peakd.com/trending/art)")
-    col_3.write(" - [Nachrichten](https://peakd.com/trending/news)")
-    col_1.write(" - [Politik](https://peakd.com/trending/politics)")
-    col_2.write(" - [Essen](https://peakd.com/trending/food)")
-    col_3.write(" - [Natur](https://peakd.com/trending/nature)")
-    st.write("Sie können aber auch auf den Button 'Zufälliger Beitrag' klicken und hinterlegte Posts werden analysiert.")
+    col_1.write(" - [Tech](https://peakd.com/trending/tech)")
+    col_2.write(" - [Art](https://peakd.com/trending/art)")
+    col_3.write(" - [News](https://peakd.com/trending/news)")
+    col_1.write(" - [Politics](https://peakd.com/trending/politics)")
+    col_2.write(" - [Food](https://peakd.com/trending/food)")
+    col_3.write(" - [Nature](https://peakd.com/trending/nature)")
+    st.write("You can also click on 'Random Post' to get a (nearly) random post from the HIVE blockchain")
 
 # **********************************
 #   Side Bar - Settings
 # **********************************
 sidebar = st.sidebar
-sidebar.write("# Einstellungen ")
+sidebar.write("# Settings ")
 
 if "author" in st.session_state and "permlink" in st.session_state:
     if len(st.session_state.author) > 3 and len(st.session_state.permlink) > 3:
@@ -101,9 +111,11 @@ if btn_random_post:
 
 txt_author = sidebar.text_input("Author", USER_INPUT["author"], key="author")
 sidebar.text_input("Permlink", USER_INPUT["permlink"], key="permlink")
-sidebar.slider("Mindest Prozentzahl", 0, 100, value=USER_INPUT["min_percentage"], key="min_percentage")
+sidebar.slider("Least Percentage", 0, 100, value=USER_INPUT["min_percentage"], key="min_percentage")
 sidebar.text_input("WordVec-API URL", USER_INPUT["wordvec_url"], key="wordvec_url")
-sidebar.write("Sie müssen nicht extra das Word2Vec-Model laden und lokal benutzen. Meine WordVec-API vereinfacht dies, indem das Modell per HTTP erreichbar ist. Es handelt sich dabei um die vortrainierte Fasttext-Datei von Facebook.")
+sidebar.write("""
+You do not have to host your own Word2Vector API. We have a free one which is hosted on our server for this purpose.
+""")
 
 USER_INPUT["author"] = st.session_state.author
 USER_INPUT["permlink"] = st.session_state.permlink
@@ -119,10 +131,10 @@ if len(USER_INPUT['author']) > 3 and len(USER_INPUT['permlink']) > 3:
     # Got Values
     info_container.write(f" **Author** : {USER_INPUT['author']}") 
     info_container.write(f" **Permlink** : {USER_INPUT['permlink']}")
-    info_container.write(f" **Mindest Prozentzahl** : {USER_INPUT['min_percentage']}%")
+    info_container.write(f" **Least Percentage** : {USER_INPUT['min_percentage']}%")
 else:
     # Warning
-    info_container.warning("Es wurde kein Beitrag ausgewählt. Bitte tragen Sie in der Sidebar einen ein oder drücken Sie auf 'Zufälliger Beitrag'. Eine Anleitung ist oben zu finden")
+    info_container.warning("Nothing was entered. Have a look at the top for an introduction and then enter something good or click on 'Random Post'!")
 
 
 # **********************************
@@ -153,15 +165,13 @@ def get_post(user_author : str, user_permlink : str):
 
 @st.cache()
 def download_image(url : str):
-    import requests, io, cv2
-    import numpy as np
+    import requests, io
     from PIL import Image
 
     response = requests.get(url)
     bytes_im = io.BytesIO(response.content)
-    cv_im = cv2.cvtColor(np.array(Image.open(bytes_im)), cv2.COLOR_RGB2BGR)
 
-    return cv_im
+    return Image.open(bytes_im)
 
 def get_plain_text(body : str) -> str:
     import markdown
@@ -228,29 +238,30 @@ def main(user_author : str, user_permlink : str):
     # Get Comment
     comment = get_post(user_author, user_permlink)
     if not comment:
-        data_container.error("Der Beitrag existiert nicht. Überprüfen Sie nochmal ihre Angaben. Sie finden Hilfe in der Anleitung oben!")
+        data_container.error("This post does not exist. Please check your entered author/permlink. You will get help at the top!")
         return
 
     # Download img
-    if "json_metadata" in comment and "image" in comment["json_metadata"] and len(comment["json_metadata"]["image"]) > 0:
+    try:
         # Get Image
         cv_im = download_image(comment["json_metadata"]["image"][0])
-    else:
+    except:
         # Show placeholder Image
         cv_im = download_image("https://d34ip4tojxno3w.cloudfront.net/app/uploads/placeholder.jpg")
 
     # Show Comment
-    data_container.write("### Dieser Beitrag wurde geladen:")
+    data_container.write("### This post was choosed and loaded:")
     img_col, text_col = data_container.columns(2)
     img_col.image(cv_im)
     text_col.write("**Titel:** " + comment["title"])
-    text_col.write("**Tags:** " + " ".join(comment["json_metadata"]["tags"]))
-    text_col.write(f"Lese den gesamten Beitrag [hier](https://peakd.com/@{comment['author']}/{comment['permlink']})")
+    text_col.write("**Category:** " + comment["category"])
+    text_col.write("**Tags:** " + ", ".join(comment["json_metadata"]["tags"]))
+    text_col.write(f"Read the whole article [here](https://peakd.com/@{comment['author']}/{comment['permlink']})")
     progress_bar.progress(10)
 
     # Get plain text
     body = get_plain_text(comment["body"])
-    data_container.write(f"**Body Länge:** {len(body)}")
+    data_container.write(f"**Body Length:** {len(body)}")
     progress_bar.progress(20)
 
     # Tokenizing
@@ -259,7 +270,7 @@ def main(user_author : str, user_permlink : str):
     
     # Get Unique tokens
     unique_tokens = set(tokens[::])
-    data_container.write(f"**Einzelne Wörter:** {len(unique_tokens)}")
+    data_container.write(f"**Unique Words:** {len(unique_tokens)}")
 
     # Get vectors 
     @st.cache()
@@ -280,8 +291,8 @@ def main(user_author : str, user_permlink : str):
         return (vectored_text, known_tokens, unknown_tokens)
 
     vectored_text, known_tokens, unknown_tokens = make_vectors(unique_tokens, tokens)
-    data_container.write(f"**Bekannte Wörter:** {known_tokens}")
-    data_container.write(f"**Unbekannte Wörter**: {unknown_tokens}")
+    data_container.write(f"**Known Words:** {known_tokens}")
+    data_container.write(f"**Unknown Words**: {unknown_tokens}")
     progress_bar.progress(75)
     
     # Calc
@@ -289,10 +300,10 @@ def main(user_author : str, user_permlink : str):
     data_container.write(f"**Input Shape:** {_input_shape}")
 
     if from_disk:
-        data_container.write("**TextCNN** wurde erfolgreich geladen")
+        data_container.write("**TextCNN** was successfully loaded")
     else:
-        data_container.error("TextCNN konnte nicht geladen werden!")
-        data_container.war("Das Model ist untrainiert. Daher sind unpräzise Ergebnisse möglich")
+        data_container.error("TextCNN cannot be loaded!")
+        data_container.war("The AI model is currently untrained. Unprecise results are expected. Please contact us for help")
 
     data_container.write(f"**Output Shape:** {_output_shape}")
     progress_bar.progress(95)
@@ -312,7 +323,7 @@ def main(user_author : str, user_permlink : str):
     fig1, ax1 = plt.subplots()
     ax1.pie(piebarchart_data_sizes, labels=piebarchart_data_labels, autopct='%1.1f%%')
     ax1.axis('equal') 
-    data_container.write("## Kuchendiagramm der Top-Werte:")
+    data_container.write("## Piechart of the top results:")
     data_container.pyplot(fig1)
 
     # Make BarChart
@@ -320,20 +331,20 @@ def main(user_author : str, user_permlink : str):
     x_pos = [i for i, _ in enumerate(piebarchart_data_labels)]
     ax1.bar(x_pos, piebarchart_data_sizes)
     plt.xticks(x_pos, piebarchart_data_labels)
-    data_container.write("## Balkendiagramm der Top-Werte:")
+    data_container.write("## Barchart of the top results:")
     data_container.pyplot(fig1)
 
     # Make DataFrame
     import pandas as pd
     df = pd.DataFrame({
-        "Kategorien" : [cat[0] for cat in CATEGORIES], 
-        "Werte (roh)" : _output, 
-        "Werte (Prozent)" : [x * 100 for x in _output] })
-    data_container.write("## Alle Werte:")
-    data_container.write("Sortierbar über einem Klick auf dem Spaltenname")
+        "Categories" : [cat[0] for cat in CATEGORIES], 
+        "Values (raw)" : _output, 
+        "Value (Percentage)" : [x * 100 for x in _output] })
+    data_container.write("## All Results:")
+    data_container.write("Sortable by clicking the column name")
 
     # Color DataFrame
-    radio_colored_dataframe = data_container.checkbox("Färbung", value=True)
+    radio_colored_dataframe = data_container.checkbox("Colouring", value=True)
     if radio_colored_dataframe:
         def cell_color(value):
             if value >= USER_INPUT["min_percentage"]:
@@ -341,7 +352,7 @@ def main(user_author : str, user_permlink : str):
             else:
                 return f'background-color: rgb(255, 51, 51, {1 - value / 10 + 0.05});'  
 
-        df = df.style.applymap(cell_color, subset=['Werte (Prozent)'])
+        df = df.style.applymap(cell_color, subset=['Value (Percentage)'])
 
     data_container.dataframe(df)
 

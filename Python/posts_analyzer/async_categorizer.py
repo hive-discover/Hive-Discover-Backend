@@ -59,7 +59,7 @@ async def get_word_vectors(tok_body : list) -> list:
     # Get them from the server
     async with aiohttp.ClientSession(headers={'Content-Type': 'application/json'}) as session:
         # Async Session
-        url = f"https://api.hive-discover.tech:{WORDVEC_API_PORT}/vector"
+        url = f"https://word2vec.hive-discover.tech/vector"
         async with session.post(url, json=tok_body) as response:        
             if not response or response.status != 200:
                 # Network Error
