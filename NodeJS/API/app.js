@@ -1,7 +1,7 @@
 //  *** Own Modules
 const hiveManager = require('./hivemanager.js')
 const mongodb = require('../database.js')
-const amabledb = require('./../amable-db.js')
+const logging = require('./../logging.js')
 
 
 //  *** Express API Handling
@@ -16,6 +16,7 @@ app.use(cors())
 app.use('/accounts', require('./routes/accounts.js'))
 app.use('/search', require('./routes/search.js'))
 app.use('/proxy', require('./routes/proxy.js'))
+app.use('/images', require('./routes/images.js'))
 
 //  Own Routes
 app.get('/', async (req, res) => {
@@ -63,7 +64,7 @@ const os = require('os');
 const worker_count = Math.min(os.cpus().length, process.env.ANALYZER_WORKERS);
 
 if(cluster.isMaster) {
-  mongodb.logAppStart("api"); // Logging
+  logging.writeData(logging.app_names.general_api, {"msg" : "Starting API Server Master-Process", "info" : {"pid" : process.pid, "worker_count" : worker_count}});
   console.log(`Taking advantage of ${worker_count} Worker`)
 
   // Fork
@@ -80,6 +81,7 @@ if(cluster.isMaster) {
     // \x1b[XXm represents a color, and [0m represent the end of this 
     //color in the console ( 0m sets it to white again )
     if (code !== 0 && !worker.exitedAfterDisconnect) {
+        logging.writeData(logging.app_names.general_api, {"msg" : "Sub-Process just crashed", "info" : {"pid" : worker.process.pid, "code" : code}}, 1);
         console.log(`\x1b[34mWorker ${worker.process.pid} crashed.\nStarting a new worker...\n\x1b[0m`);
         const nw = cluster.fork();
         console.log(`\x1b[32mWorker ${nw.process.pid} will replace him \x1b[0m`);
@@ -87,16 +89,10 @@ if(cluster.isMaster) {
   });
 
   console.log(`Master PID: ${process.pid}`)
-} else {
-  // Connect to DB
- /* amabledb.connectToDB(process.env.AmableDB_Host).then(value => {
-    if(value)
-      console.log("Connected to amableDB");
-    else
-      throw Error("Failed to Connect to DB");
-  });*/
-   
+} else {   
   //  Start server...
+  logging.writeData(logging.app_names.general_api, {"msg" : "Starting API Server Sub-Process", "info" : {"pid" : process.pid}});
+
   app.listen(port, () => {
     console.log(`App listening at http://localhost:${port}`)
   });

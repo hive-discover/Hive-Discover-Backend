@@ -4,7 +4,7 @@ const config = require("./config");
 // Connection Settings
 const User = process.env.MongoDB_User, Password = process.env.MongoDB_Password;
 const Host = process.env.MongoDB_Host, DatabaseName = process.env.MongoDB_Name;
-const url = "mongodb://" + User + ":" + Password + "@" + Host + ":27017/?authSource=admin&readPreference=primary&ssl=false"
+const url = process.env.MongoDB_Connection_String;
 const options = {
   useUnifiedTopology : true
 }
@@ -86,10 +86,10 @@ async function logAppStart(app_name){
 }
 
 //  *** Find Operations ***
-function findOneInCollection(collection_name, query){
+function findOneInCollection(collection_name, query, db_name = "hive-discover"){
     return new Promise(async (resolve, reject) => {
       await connectToDB(async (err, client) => {
-        database = client.db(DatabaseName);
+        database = client.db(db_name);
         const col = database.collection(collection_name);
         const doc = await col.findOne(query)
         resolve(doc);
@@ -97,30 +97,30 @@ function findOneInCollection(collection_name, query){
     });
 }
 
-function findManyInCollection(collection_name, query, options = {}){
+function findManyInCollection(collection_name, query, options = {}, db_name = "hive-discover"){
     return new Promise(async (resolve, reject) => {
       await connectToDB(async (err, client) => {
-        database = client.db(DatabaseName);
+        database = client.db(db_name);
         let col = database.collection(collection_name);
         resolve(col.find(query, options));
       })     
     });
 }
   
-function countDocumentsInCollection(collection_name, query){
+function countDocumentsInCollection(collection_name, query, db_name = "hive-discover"){
     return new Promise(async (resolve, reject) => {
       await connectToDB(async (err, client) => {
-        database = client.db(DatabaseName);
+        database = client.db(db_name);
         let col = database.collection(collection_name);
         resolve(col.countDocuments(query));
     });
   });
 }
 
-function aggregateInCollection(collection_name, pipeline){
+function aggregateInCollection(collection_name, pipeline, db_name = "hive-discover"){
     return new Promise(async (resolve, reject) => {
       await connectToDB(async (err, client) => {
-        database = client.db(DatabaseName);
+        database = client.db(db_name);
         let col = database.collection(collection_name);
         resolve(col.aggregate(pipeline));
     });
@@ -129,60 +129,60 @@ function aggregateInCollection(collection_name, pipeline){
 
   
 //  *** Manipulate Operations ***
-function insertOne(collection_name, document){
+function insertOne(collection_name, document, db_name = "hive-discover"){
   return new Promise(async (resolve, reject) => {
     await connectToDB(async (err, client) => {
-      database = client.db(DatabaseName);
+      database = client.db(db_name);
       let col = database.collection(collection_name);
       resolve(col.insertOne(document));
     });
   });
 }
 
-function updateOne(collection_name, query, update, upsert = false){
+function updateOne(collection_name, query, update, upsert = false, db_name = "hive-discover"){
   return new Promise(async (resolve, reject) => {
     await connectToDB(async (err, client) => {
-      database = client.db(DatabaseName);
+      database = client.db(db_name);
       let col = database.collection(collection_name);
       resolve(col.updateOne(query, update, {upsert : upsert}));
     });
   });
 }
 
-function updateMany(collection_name, query, update){
+function updateMany(collection_name, query, update, db_name = "hive-discover"){
   return new Promise(async (resolve, reject) => {
     await connectToDB(async (err, client) => {
-      database = client.db(DatabaseName);
+      database = client.db(db_name);
       let col = database.collection(collection_name);
       resolve(col.updateMany(query, update));
     });
   });
 }
 
-function deleteMany(collection_name, query){
+function deleteMany(collection_name, query, db_name = "hive-discover"){
   return new Promise(async (resolve, reject) => {
     await connectToDB(async (err, client) => {
-      database = client.db(DatabaseName);
+      database = client.db(db_name);
       let col = database.collection(collection_name);
       resolve(col.deleteMany(query));
     });
   });
 }
   
-function performBulk(collection_name, bulk){
+function performBulk(collection_name, bulk, db_name = "hive-discover"){
   return new Promise(async (resolve, reject) => {
     await connectToDB(async (err, client) => {
-      database = client.db(DatabaseName);
+      database = client.db(db_name);
       let col = database.collection(collection_name);  
       resolve(col.bulkWrite(bulk, {ordered : false}));
     });
   });
 }
   
-function generateUnusedID(collection_name){
+function generateUnusedID(collection_name, db_name = "hive-discover"){
   return new Promise(async (resolve) => {
     await connectToDB(async (err, client) => {
-      database = client.db(DatabaseName);
+      database = client.db(db_name);
       let col = database.collection(collection_name);
 
       while(true){    

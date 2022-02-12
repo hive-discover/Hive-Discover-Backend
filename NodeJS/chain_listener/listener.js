@@ -1,5 +1,6 @@
 const request = require('request');
 const hivejs = require('@hivechain/hivejs')
+const logging = require('./../logging.js')
 
 const mongodb = require('./../database.js')
 const config = require('./../config')
@@ -74,6 +75,73 @@ function getCurrentBlockHeigth(){
     });
 } 
 
+async function getMutedStockImageAccounts(){
+    const getSomeMutedAccounts = (last_account = "") => {
+        var options = {
+            url: 'https://api.hive.blog',
+            method: 'POST',
+            body: '{"jsonrpc":"2.0", "method":"bridge.list_community_roles", "params":{"community":"hive-118554", "last":"'+last_account+'","limit":100}, "id":1}'
+        };
+    
+        return new Promise((resolve, reject) => {
+            request(options, (error, response, body) =>{
+                if (!error && response.statusCode == 200 && JSON.parse(body).result) 
+                    resolve(JSON.parse(body));
+                else if(error)
+                    reject(error);
+                else
+                    reject(JSON.parse(body));
+            });
+        });
+    }  
+
+    let last_account = "";
+    while(true){
+        const muted_accs = await getSomeMutedAccounts(last_account);
+        if(muted_accs.result.length === 0)
+            break;
+
+        for(let i = 0; i < muted_accs.result.length; i++){
+            [last_account, role, empty] = muted_accs.result[i];
+
+            if(role !== "muted")
+                continue;
+
+            // Check if it already exists
+            const exists = await mongodb.findOneInCollection("muted", {_id : last_account}, "images");
+            if(exists) // Skip because it already exists
+                continue; 
+
+            // Insert in muted_accounts
+            await mongodb.insertOne("muted", {_id : last_account, type : "acc"}, "images");
+        }
+    }
+
+    // Remove all muted-account's posts
+    const muted_accs = await mongodb.findManyInCollection("muted", { type : "acc"}, {}, "images");
+    for await(const acc of muted_accs){
+        // Find author's post-ids
+        let his_post_ids = [];
+        let cursor = await mongodb.findManyInCollection("post_info", {author : acc._id}, {projection : {_id : 1}}, "images");
+        for await(const post of cursor)
+            his_post_ids.push(post._id);
+
+        if(his_post_ids.length === 0)
+            continue; // Nothing to do
+
+        // Remove all his posts
+        await mongodb.deleteMany("post_info", {_id : {$in : his_post_ids}}, "images");
+        await mongodb.deleteMany("post_data", {_id : {$in : his_post_ids}}, "images");
+        await mongodb.deleteMany("post_text", {_id : {$in : his_post_ids}}, "images");
+
+        // Remove img-references to his posts
+        await mongodb.updateMany("img_data", {target : {$in : his_post_ids}}, {$pull : {target : {$in : his_post_ids}}}, "images");
+    }
+
+    // Run this script every hour
+    setTimeout(getMutedStockImageAccounts, 1000 * 60 * 60)
+    logging.writeData(logging.app_names.chain_listener, {"msg" : "Processed muted Stock Image Community accounts"});
+}
 
 //  *** Start/Main Functions ***
 let currentBlockNum;
@@ -99,6 +167,7 @@ async function repairDatabase(batch_size=4096){
 
     let corrupted_ids = new Set();
     console.log("Repairing Database"); 
+    logging.writeData(logging.app_names.chain_listener, {"msg" : "Start Repairing our Database"});
 
     const check_func = (collection, ids) => {
         return new Promise(async (resolve) => {
@@ -149,19 +218,11 @@ async function repairDatabase(batch_size=4096){
     // Get them and reenter them
     let open_tasks = [];
     authorperms.forEach(elem => {
-        open_tasks.push(new Promise(async resolve => {
+        open_tasks.push(new Promise(resolve => {
             hivejs.api.setOptions({ url: config.getRandomNode() });
             hivejs.api.getContent(elem.author, elem.permlink, async (err, result) => {
                 if(result){
-                    const task = handleCommentOP({
-                        body : result.body,
-                        title : result.title,
-                        parent_author : result.parent_author,
-                        json_metadata : result.json_metadata,
-                        author : result.author,
-                        permlink : result.permlink,
-                        timestamp : result.created
-                    });
+                    const task = processing.commentOperations([result]);
                     await task;
                 }
                 
@@ -174,6 +235,7 @@ async function repairDatabase(batch_size=4096){
     if(open_tasks.length > 0)
         await Promise.all(open_tasks);
     console.log("Made all");
+    logging.writeData(logging.app_names.chain_listener, {"msg" : "Successfully repaired our Database!"});
 }
 
 async function main(){
@@ -208,8 +270,10 @@ async function main(){
 
     // Setting new CurrentBlockNum
     console.log("Settings CURRENT_BLOCK_NUM to ", currentBlockNum);
+    logging.writeData(logging.app_names.chain_listener, {"msg" : "Blocks proceed", "info" : {"current_block_num" : currentBlockNum}});
     await mongodb.updateOne("stats", {tag : "CURRENT_BLOCK_NUM"}, {$set : {current_num : currentBlockNum}}).catch(err => {
         console.error("Cannot Set CurrentBlockNum, exiting and then restart");
+        logging.writeData(logging.app_names.chain_listener, {"msg" : "Cannot Set CurrentBlockNum", "info" : {"err" : err}}, 1);
         process.exit(-1);
     })
     
@@ -219,6 +283,7 @@ async function main(){
 }
 
 // Start everything
-mongodb.logAppStart("chain-listener");
-repairDatabase()
-    .then(main());
+logging.writeData(logging.app_names.chain_listener, {"msg" : "Starting Chain-Listener"});
+repairDatabase();
+getMutedStockImageAccounts();
+main();

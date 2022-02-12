@@ -1,6 +1,8 @@
 const HTMLParser = require('node-html-parser');
 const MarkdownIt = require('markdown-it')
 const md = new MarkdownIt();
+const logging = require('./../logging.js')
+const hivejs_lib = require('@hivechain/hivejs')
 
 const mongodb = require('./../database.js')
 const config = require('./../config')
@@ -9,18 +11,96 @@ const config = require('./../config')
 //  *** Handler Operations ***
 const commentOperations = async (op_values) => {
     const handler_func = (async (comment) => {
-        if(comment.parent_author !== "") return; // Is a Comment
+        
+        
+        // Check if Comment
+        if(comment.parent_author !== "") { 
+            // Is a Comment ==> return but firstly check if it is a reply to HiveStockImage-Community
+            if(comment.json_metadata.includes("hive-118554")) {        
+                if(comment.body.includes("!update-stock-image-tags")){
+                    // Try to find the stock-image-post
+                    const post_info = await mongodb.findOneInCollection("post_info", {author : comment.parent_author, permlink : comment.parent_permlink}, "images");
+                    if(!post_info) return; // No post found
+                    // post_info.author === comment.parent_author
+
+                    // Check if User is allowed to change the hashtags
+                    //  Only the original author or the MOD/ADMIN of the community is allowed to do that
+                    const allowed_accounts = [post_info.author, "hive-118554", "minismallholding", "crosheille", "kattycrochet"];
+                    if(!allowed_accounts.includes(comment.author)) return; // User is not allowed
+
+                    // Get Tags and Update the stock-image-post
+                    comment.body = comment.body.replace("\n", " ");
+                    let image_tags = comment.body.split(' ').filter(v=> v.startsWith('#'))
+                    image_tags = image_tags.map(v=> v.substring(1));
+                    image_tags = image_tags.join(' ');
+
+                    await mongodb.updateOne("post_text", {_id : post_info._id}, {$set : {text : image_tags, doc_vectors : null, updated : true}}, true, "images");
+                    logging.writeData(logging.app_names.chain_listener, {"msg" : "Updates Stock Image Keywords", "info" : {"post" : post_info._id}});
+                } else {
+                    // Is a simple reply to a StockImage Post, no update-comment
+                    // Insert comment in collection
+                    const comment_id = await mongodb.generateUnusedID("post_replies", "images");
+                    await mongodb.insertOne("post_replies", {
+                        _id : comment_id,
+                        author : comment.author, 
+                        permlink : comment.permlink,
+                        text : comment.body
+                    }, "images");
+
+                    // Push comment_id to post_info
+                    await mongodb.updateOne("post_info", {author : comment.parent_author, permlink : comment.parent_permlink}, {$addToSet : {replies : comment_id}}, false, "images");
+                }
+            }
+
+            return; // Return anyways because it is no actual post
+        }
 
         // Get later unused id and check if it exists
-        const getUnusedID_task = mongodb.generateUnusedID("post_info");
+        let getUnusedID_task = mongodb.generateUnusedID("post_info");
 
-        // Check if banned (post or user) OR if it's exists
+        // Check if banned (post or user)
         if( await mongodb.findOneInCollection("banned", {author : comment.author, permlink: comment.permlink}) || 
-            await mongodb.findOneInCollection("banned", {name : comment.author}) ||
-            await mongodb.findOneInCollection("post_info", {author : comment.author, permlink: comment.permlink})
+            await mongodb.findOneInCollection("banned", {name : comment.author})
         ) {
-            // Is banned / already exists
+            // Is banned
             return;
+        }
+
+        // Check if post exists
+        const post_info = await mongodb.findOneInCollection("post_info", {author : comment.author, permlink: comment.permlink})
+        if(post_info){
+            // Post Already exists ==> Download the full-changed-post from the blockchain
+            comment = await new Promise((resolve, reject) => {
+                hivejs_lib.api.getContent(comment.author, comment.permlink, (err, result) => {
+                    if(result){
+                        // Got a comment
+                        resolve(result);
+                        return;
+                    }
+
+                    // Something failed
+                    reject(err);
+                });
+            }).catch(err => {
+                // Log error
+                console.log("Error getting Content from changed content: ", err);
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "New Content cannot get downloaded", "info" : {"post" : post_info._id, "err" : err}}, 1);
+                return null;
+            });
+
+            if(!comment) return; // No comment found, just let the change unprocessed
+
+            // Delete post from hive-discover DB
+            await Promise.all([
+                mongodb.deleteMany("post_info", {_id : post_info._id}),
+                mongodb.deleteMany("post_text", {_id : post_info._id}),
+                mongodb.deleteMany("post_data", {_id : post_info._id}),
+                mongodb.deleteMany("post_raw", {_id : post_info._id})
+            ]);
+
+            // Invoke the id task
+            getUnusedID_task = new Promise(resolve => {resolve(post_info._id)});
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "One General Post got updated", "info" : {"post" : post_info._id}});
         }
 
         // Start preparing the Post
@@ -30,7 +110,7 @@ const commentOperations = async (op_values) => {
             // JSON Parse error --> set to {} because it is usually '' then
             comment.json_metadata = {}
         }
-
+        
         // Parse Tags and Images
         if(!comment.json_metadata.tags) 
             comment.json_metadata.tags = [];
@@ -44,16 +124,18 @@ const commentOperations = async (op_values) => {
             comment.json_metadata.image = [comment.json_metadata.image];
 
         // Check banned Words
+        let stop_working = false;
         config.BANNED_WORDS.forEach((item)=>{
             if(
-                comment.body.indexOf(item) >= 0 || 
-                comment.json_metadata.tags.includes(item) >= 0 ||
-                comment.title.indexOf(item) >= 0
+                comment.body.includes(item) || 
+                comment.json_metadata.tags.includes(item) ||
+                comment.title.includes(item) 
             ){
                 // Not enter
-                return;
+                stop_working = true;
             }
         });
+        if(stop_working) return;
 
         // Parse body and extract more images
         let html_body = md.render(comment.body);
@@ -62,18 +144,15 @@ const commentOperations = async (op_values) => {
         for(let i = 0; i < imgs.length; i ++)
         {    
             let src = imgs[i].attrs.src
-            if(src && !(src in comment.json_metadata.image))
-            comment.json_metadata.image.push(src)
+            if(src && !comment.json_metadata.image.includes(src))
+                comment.json_metadata.image.push(src)
         }
 
         // Reparse to only get text
         root = HTMLParser.parse(root.text);
         comment.body = root.text;   
+        comment.body = comment.body.replace(/\n/g, " \n ");
         const plain_body = comment.body;
-        comment.body = config.slugifyText(comment.body); // replaceAll non-latin
-        comment.title = config.slugifyText(comment.title); // replaceAll non-latin
-        comment.json_metadata.tags = config.slugifyText(comment.json_metadata.tags); // replaceAll non-latin
-
         if(comment.body.split(' ').length < 10) {
             // Too low words
             return;
@@ -86,11 +165,65 @@ const commentOperations = async (op_values) => {
 
         // Prepare documents. Timestamp just now becuase comment does not have it but because it is the latest block it matches it (nearly)
         const post_id = await getUnusedID_task;
-        const post_info_doc = {_id : post_id, author : comment.author, permlink : comment.permlink, timestamp : comment.timestamp};
+        const post_info_doc = {_id : post_id, author : comment.author, permlink : comment.permlink, parent_permlink : comment.parent_permlink, timestamp : comment.timestamp};
         const post_text_doc = {_id : post_id, title : comment.title, body : comment.body, tag_str : comment.json_metadata.tags, timestamp : comment.timestamp}
-        const post_data_doc = {_id : post_id, categories : null, lang : null, timestamp : comment.timestamp}
+        const post_data_doc = {_id : post_id, categories : null, lang : null, doc_vectors : null, timestamp : comment.timestamp}
         raw_post.json_metadata = comment.json_metadata;
         const post_raw_doc = {_id : post_id, timestamp : comment.timestamp, raw : raw_post, plain : {body : plain_body}}
+
+        // Check if post is a stock-image
+        if(
+            comment.json_metadata.tags.includes("hivestockimages") ||
+            comment.json_metadata.tags.includes("hive-118554") ||
+            comment.parent_permlink === "hive-118554" ||
+            comment.parent_permlink === "hivestockimages"
+        ){
+            if(await mongodb.findOneInCollection("muted", {_id : comment.author}, "images")){
+                // Is a muted account ==> return the whole process of entering it
+                return;
+            }
+
+            let stock_post_id = await mongodb.generateUnusedID("post_info", "images");
+
+            // Check if it got updated
+            const img_post_info = await mongodb.findOneInCollection("post_info", {author : comment.author, permlink: comment.permlink}, "images");
+            if(img_post_info){
+                // Post Already exists ==> Delete post from images DB
+                await Promise.all([
+                    mongodb.deleteMany("post_info", {_id : img_post_info._id}, "images"),
+                    mongodb.deleteMany("post_text", {_id : img_post_info._id}, "images"),
+                    mongodb.deleteMany("post_data", {_id : img_post_info._id}, "images"),
+                ]);
+
+                // Invoke the id
+                stock_post_id = img_post_info._id;
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "One Stock Image Post got updated", "info" : {"post" : stock_post_id}});
+            }
+
+            // Prepare Text, extract all words beginning with a hashtag and then remove the hashtag
+            let image_tags = comment.body.split(' ').filter(v=> v.startsWith('#'))
+            image_tags = image_tags.map(v=> v.substring(1));
+            image_tags = image_tags.join(' ');
+
+            // Insert in images.post_info
+            await mongodb.insertOne("post_info", {
+                _id : stock_post_id,
+                author : comment.author,
+                permlink : comment.permlink,
+                timestamp : comment.timestamp,
+                images : comment.json_metadata.image,
+                title : comment.title              
+            }, "images");
+
+            // Insert int post_text
+            await mongodb.insertOne("post_text", {
+                _id : stock_post_id,
+                text : image_tags,
+                doc_vectors : null
+            }, "images");
+
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Insert new Stock Image Post", "info" : {"post" : stock_post_id}});
+        }
 
         try{
             // Not insert in bulk_operations because it depends on post_info document
@@ -100,14 +233,18 @@ const commentOperations = async (op_values) => {
                 mongodb.insertOne("post_data", post_data_doc),
                 mongodb.insertOne("post_text", post_text_doc),
                 mongodb.insertOne("post_raw", post_raw_doc),
-            ])
+            ]);
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Inserted a new Post", "info" : {"post" : post_id}});
         }catch{/* Duplicate Error */}
     });
 
     // Start all tasks
     let handler_tasks = [];
     op_values.forEach(comment => {
-        handler_tasks.push(handler_func(comment).catch(err => console.error("Error while handling Comment: ", err)))
+        handler_tasks.push(handler_func(comment).catch(err => {
+            console.error("Error while handling Comment: ", err);
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Error Handling Comments", "info" : {"err" : err}});
+        }));
     });
 
     // Finish up
@@ -131,6 +268,7 @@ const voteOperations = async (op_values) => {
             // Not banned --> Create account
             account_id = await mongodb.generateUnusedID("account_info");
             await mongodb.insertOne("account_info", {_id : account_id, name : vote.voter});
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Created new account", "info" : {"username" : vote.voter}});
         } else {
             // We got the account
             account_id = account_info._id;
@@ -144,6 +282,9 @@ const voteOperations = async (op_values) => {
                     filter : {_id : post_info._id},
                     update : {$addToSet : {votes : account_id}}
                 }});
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "Added Vote to Post", "info" : {"post" : post_info._id, "account" : account_id}});
+            } else {
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "Cannot Find Post to add that Vote (maybe to old)", "info" : {"author" : vote.author, "permlink" : vote.permlink}});
             }
                 
         }
@@ -152,7 +293,10 @@ const voteOperations = async (op_values) => {
     // Start all tasks
     let handler_tasks = [];
     op_values.forEach(async vote => {
-        handler_tasks.push(handler_func(vote).catch(err => console.error("Error while handling Vote: ", err)))
+        handler_tasks.push(handler_func(vote).catch(err => {
+            console.error("Error while handling Vote: ", err);
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Error Handling Votes", "info" : {"err" : err}}, 1);
+        }));
     });
 
     // Finish up
@@ -198,12 +342,16 @@ const accUpdateOperations = async (op_values) => {
                update : {$set : {profile : account_profile}}
            }});
         }
+        logging.writeData(logging.app_names.chain_listener, {"msg" : "Account Update", "info" : {"username" : op_value.account}});
     });
 
     // Start all tasks
     let handler_tasks = [];
     op_values.forEach(async value => {
-        handler_tasks.push(handler_func(value).catch(err => console.error("Error while handling AccountUpdates: ", err)))
+        handler_tasks.push(handler_func(value).catch(err => {
+            console.error("Error while handling AccountUpdates: ", err);
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Error handling AccountUpdate", "info" : {"err" : err}}, 1);
+        }));
     });
 
     // Finish up
@@ -237,7 +385,16 @@ const customJSONOperations = async (op_values, trx_ids) => {
             }
 
             // Enter into account_data with a link to this transaction
-            await mongodb.insertOne("account_data", {_id : account_id, accept : {timestamp : new Date(Date.now()), trx_id : trx}}).catch(err => {/* Not interesting */});
+            await mongodb.insertOne("account_data", {_id : account_id, accept : {timestamp : new Date(Date.now()), trx_id : trx}})
+            .then(() => {
+                // Success ==> Log
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "Inserted successfully into account_data", "info" : {"username" : account, "acc_id" : account_id}});
+            })
+            .catch(err => {
+                // Failed
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "Cannot Insert into account_data", "info" : {"err" : err, "username" : account, "acc_id" : account_id}}, 1);
+            });
+            
         }
 
         //  ** Ban Stuff **
@@ -245,6 +402,7 @@ const customJSONOperations = async (op_values, trx_ids) => {
             if(!await mongodb.findOneInCollection("banned", {name : account})){
                 // Enter into DB and check if
                 await mongodb.insertOne("banned", {name : account});
+                logging.writeData(logging.app_names.chain_listener, {"msg" : "User banned", "info" : {"username" : account}});
 
                 const account_info = await mongodb.findOneInCollection("account_info", {"name" : account});
                 if(account_info){
@@ -268,14 +426,19 @@ const customJSONOperations = async (op_values, trx_ids) => {
                 }
             }
         }
-        if(json.cmd === "unban")
+        if(json.cmd === "unban"){
             await mongodb.deleteMany("banned", {name : account});
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "User unbanned", "info" : {"username" : account}});
+        }
     });
 
     // Start all tasks
     let handler_tasks = [];
     op_values.forEach(async (value, index) => {
-        handler_tasks.push(handler_func(value, trx_ids[index]).catch(err => console.error("Error while handling CustomJSON: ", err)))
+        handler_tasks.push(handler_func(value, trx_ids[index]).catch(err => {
+            console.error("Error while handling CustomJSON: ", err);
+            logging.writeData(logging.app_names.chain_listener, {"msg" : "Error handling CustomJsons", "info" : {"err" : err}}, 1);
+        }));
     });
 
     // Finish up
@@ -332,4 +495,4 @@ const onBlock = async (block) => {
     ]);
 };
 
-module.exports = {onBlock};
+module.exports = {onBlock, commentOperations};
