@@ -1,8 +1,9 @@
 const mongodb = require('../../database.js')
-const amabledb = require('./../../amable-db.js')
+const apiKeys = require('./../api_keys.js')
 const stats = require('./../stats.js')
 const hiveManager = require('./../hivemanager.js')
 const config = require('./../../config.js')
+const logging = require('./../../logging.js')
 
 const request = require('request');
 const queryParser = require('express-query-int');
@@ -15,23 +16,30 @@ router.use(queryParser())
 
 router.get('/', async (req, res) => {
   await stats.addStat(req);
-  const username = req.query.username, access_token = req.query.access_token;
+  const username = req.query.username;
   
   // Validate form
-  if(!username || username.length < 2 || !access_token || access_token.length < 10){
-    res.send({status : "failed", err : {"msg" : "Please give valid username/access_token!"}}).end()
+  if(!username || username.length < 2){
+    res.send({status : "failed", err : {"msg" : "Please give valid username!"}}).end()
     return;
   }
   
-  // Check Access Token or if Test-Account
-  if(!await hiveManager.checkAccessToken(username, access_token) && !hiveManager.checkIfTestAccount(username, access_token)){
+  // Check things in Parralel
+  const access_token = req.query.access_token || "unknown";
+  const req_api_key = req.query.api_key || "unknown";
+  let access_token_task = hiveManager.checkAccessToken(username, access_token)
+  let api_key_task = apiKeys.checkApiKey(req_api_key);
+  let account_info_task = mongodb.findOneInCollection("account_info", {"name" : username});
+
+  // Check Access Token, if Test-Account or if API Key
+  if(!await access_token_task && !hiveManager.checkIfTestAccount(username, access_token) && !await api_key_task){
     // Access Token is wrong and it is not the Test-Account
     res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
     return;
   }
 
   // Get account_info
-  const account_info = await mongodb.findOneInCollection("account_info", {"name" : username});
+  const account_info = await account_info_task;
   if(account_info == null) {
     if(await mongodb.findOneInCollection("banned", {"name" : username})){
       // Is banned
@@ -149,7 +157,7 @@ router.get('/', async (req, res) => {
   res.send({status : "ok", msg : "Account is available", profile : (await get_profile())}).end()
 })
 
-function calcFeed(account_id,  amount, abstraction_value){
+function calcFeed(account_id,  amount, abstraction_value, index_name = "general-index"){
   // Request feed at CPP-NswAPI
   let options = {
     'method': 'POST',
@@ -160,7 +168,8 @@ function calcFeed(account_id,  amount, abstraction_value){
     body: JSON.stringify({
       "account_id": account_id,
       "amount": amount,
-      "abstraction_value": abstraction_value
+      "abstraction_value": abstraction_value,
+      "index_name" : index_name
     })
   
   };
@@ -169,46 +178,59 @@ function calcFeed(account_id,  amount, abstraction_value){
     request(options, (error, response) => {
       if (error) throw new Error(error);
       let body = JSON.parse(response.body);
-      resolve(body.posts.map(item => {return parseInt(item, 10)}));
+      body.posts = body.posts.map(item => {return parseInt(item, 10)})
+      resolve(body);
     });
   });
 }
 
 router.get('/feed', async (req, res) => {
   await stats.addStat(req);
-  const username = req.query.username, access_token = req.query.access_token;
-  let amount = Math.min(parseInt(req.query.amount) || 20, 50);
+  const username = req.query.username;
+  const index_name = req.query.index_name || "";
+  let amount = Math.min(parseInt(req.query.amount) || 20, 250);
   const full_data = (req.query.full_data === 'true' || req.query.full_data === '0');
   const abstraction_value = parseInt(req.query.abstraction_value || 1);
 
   // Validate form
-  if(!username || username.length < 2 || !access_token || access_token.length < 10){
+  if(!username || username.length < 2){
     res.send({status : "failed", err : {"msg" : "Please give valid username/access_token!"}}).end()
     return;
   }
-  
 
   // Check things in Parralel
+  const access_token = req.query.access_token || "unknown";
+  const req_api_key = req.query.api_key || "unknown";
   let access_token_task = hiveManager.checkAccessToken(username, access_token)
+  let api_key_task = apiKeys.checkApiKey(req_api_key);
   let account_info_task = mongodb.findOneInCollection("account_info", {"name" : username});
 
-  // Check Access Token or if it is the Test Account
-  if(!await access_token_task && !hiveManager.checkIfTestAccount(username, access_token)){
-    res.send({status : "failed", err : {"msg" : "Access Token is not valid!"}}).end()
+  // Check Access Token, if it is the Test Account or api key
+  if(!await access_token_task && !hiveManager.checkIfTestAccount(username, access_token) && !await api_key_task){
+    res.send({status : "failed", err : {"msg" : "Access Token / API Key is not valid!"}, code : 4}).end()
     return;
   }
+
+  // log
+  logging.writeData(logging.app_names.general_api, {"msg" : "Account Feed", "info" : {
+    "name" : username,
+    "amount" : amount
+  }});
 
   // Get account_info
   let account_info = await account_info_task;
   if(account_info == null) {
-    // Not inside --> But because the AccessToken is valid, it has to be a real account
+    // Not inside
     // --> check if banned
     if(await mongodb.findOneInCollection("banned", {"name" : username})){
       // Is banned
-      res.send({status : "failed", banned : true, msg : "You are banned!"}).end()
-      return;
+      res.send({status : "failed", banned : true, msg : "You are banned!", code : 2}).end()
+      
+    } else {
+      res.send({status : "failed", banned : true, msg : "This Account does not exist", code : 1}).end()
     }
 
+    return;
     // Is not banned --> create unique ID
     let account_id = null;
     while(account_id == null || await mongodb.findOneInCollection("account_info", {"_id" : account_id}))
@@ -228,21 +250,24 @@ router.get('/feed', async (req, res) => {
   let account_data = await mongodb.findOneInCollection("account_data", {"_id" : account_info._id});
   if(account_data == null){
     // If not inside --> not accepted policy
-    res.send({status : "failed", msg : "You have to accept our Policies!"}).end()
+    res.send({status : "failed", msg : "You have to accept our Privacy Policy!", code : 3}).end()
     return;
-    account_data = {"_id" : account_info._id, analyze : true}
-    await mongodb.insertOne("account_data", account_data)
-      .catch(err => {
-        // Something failed
-        res.send({status : "failed", msg : "The database operation returned an error", err : err}).end()
-      })
   }
 
   // account_info, account_data exists and he accepted the privacy policy
   // Get Feed
-  let posts = await (calcFeed(account_info._id, amount, abstraction_value));
+  let feed_response = await (calcFeed(account_info._id, amount, abstraction_value, index_name))
+    .catch((err) => {
+      return {status : "failed", msg : "Something went wrong", code : 0, err : err};
+    });
   
+  if(feed_response.status === "failed"){
+    res.send(feed_response).end();
+    return;
+  }
+
   // Check if full_data, else get only authorperm (Order does not matter)
+  let posts = feed_response.posts;
   if(full_data){
     // Get full_data from post_raw
     const post_raw_cursor = await mongodb.findManyInCollection("post_raw", {_id : {$in : posts}});
@@ -262,7 +287,7 @@ router.get('/feed', async (req, res) => {
 
   // Filter failed ones out and return
   posts = posts.filter(elem => !Number.isInteger(elem));
-  res.send({status : "ok", posts : posts}).end()
+  res.send({status : "ok", posts : posts, index_name : feed_response.index_name}).end()
 })
 
 function deleteAccount(username, access_token){

@@ -79,10 +79,15 @@ function getContent(author, permlink){
 
 
 function checkAccessToken(username, access_token){
-    const hashed_access_token = crypto.createHash("sha256").update(access_token).digest("base64");
-    const redis_key_name = username + ".hashed_access_token";
+    return new Promise((resolve, reject) => {        
+        if(!username || !access_token || access_token === "unknown") {
+            resolve(false);
+            return;
+        }
+    
+        const hashed_access_token = crypto.createHash("sha256").update(access_token).digest("base64");
+        const redis_key_name = username + ".hashed_access_token";
 
-    return new Promise((resolve, reject) => {
         // Check if User cached in RedisDB
         config.redisClient.get(redis_key_name, (err, reply) => {
             if(reply && reply === hashed_access_token){
