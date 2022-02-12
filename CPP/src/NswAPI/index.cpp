@@ -23,132 +23,203 @@ using bsoncxx::builder::basic::make_array;
 
 namespace NswAPI {
 
-	hnswlib::L2Space space(46);
+	template<typename T>
+	void parseBinaryToVector(
+		const uint8_t* first, 
+		const uint32_t b_size, 
+		std::vector<T>& result
+	) {
+		// Set size and enter all elements
+		result.resize(b_size / sizeof(T));
+
+		for (size_t i = 0; i < b_size / sizeof(T); ++i) 
+			result[i] = *(reinterpret_cast<const T*>(first + i * sizeof(T)));		
+	}
+
+	template<typename T>
+	void parseBinaryToVector(
+		const bsoncxx::document::element& binary_element,
+		std::vector<T>& result
+	) {
+		const bsoncxx::types::b_binary bin_data = binary_element.get_binary();
+		parseBinaryToVector<T>(bin_data.bytes, bin_data.size, result);
+	}
+
+	template<typename T>
+	uint8_t* parseVectorToBinary(
+		const std::vector<T>& vector,
+		uint32_t& b_size	
+	) {
+		// Set size and enter all binary elements to an bytes-array
+		b_size = sizeof(T) * vector.size();
+		uint8_t* first = new uint8_t[b_size];
+
+		for (int i = 0; i < vector.size(); ++i) {
+			// Convert item to binary
+			uint8_t ures[sizeof(T)];
+			memcpy(&ures, &vector[i], sizeof(T));
+
+			// Push all bytes to first-array
+			for (int k = 0; k < sizeof(T); ++k)
+				first[i * sizeof(T) + k] = ures[k];
+		}
+
+		return first;
+	}
+
+	template<typename T>
+	bsoncxx::types::b_binary parseVectorToBinary(
+		const std::vector<T>& vector
+	) {
+		// Set into bin_data obj and return
+		bsoncxx::types::b_binary bin_data = {};
+		bin_data.bytes = parseVectorToBinary(vector, bin_data.size);
+		return bin_data;
+	}
 
 	void makeFeed(
 		const int account_id,
 		const int abstraction_value,
 		const int amount,
-		std::unordered_set<int>& post_results
+		const std::string index_name,
+		std::vector<int>& post_results
 	) {
 		// Get account-activities
-		std::vector<int> post_ids, vote_ids;
-		User::Account::getActivities(account_id, post_ids, vote_ids);
-		if (post_ids.size() == 0 && vote_ids.size() == 0)
+		std::vector<int> his_post_ids, his_vote_ids;
+		User::Account::getActivities(account_id, his_post_ids, his_vote_ids);
+		const int max_account_activities = his_post_ids.size() + his_vote_ids.size();
+		if (max_account_activities == 0)
 			return; // Nothing available
 
-		std::set<int> account_activities(post_ids.begin(), post_ids.end());
-		account_activities.insert(vote_ids.begin(), vote_ids.end());
-		const int max_account_activities = account_activities.size();
+		// Insert all activities into one set to remove them from post_scores
+		std::set<int> account_activities(his_post_ids.begin(), his_post_ids.end());
+		account_activities.insert(his_vote_ids.begin(), his_vote_ids.end());
 
+		// Establish connection
 		auto client = GLOBAL::MongoDB::mongoPool.acquire();
 		auto post_data = (*client)["hive-discover"]["post_data"];
 
-		// Run until result is full
+		std::srand(std::time(nullptr));
+		std::map<int, int> post_distances; // post-id and number (from highToLowFunction)
 		size_t loop_counter = 0;
-		while (post_results.size() < amount && loop_counter < 100) {
-			// Get a (random) batch of ids
-			const size_t batchCount = std::min(max_account_activities, 25);
-			bsoncxx::builder::basic::array batchIDs;
-			{
-				// get random Indexes
-				std::set<int> rndIndexes;
-				for (size_t i = 0; i < batchCount; ++i)
-					rndIndexes.insert(std::rand() % max_account_activities);
 
-				// Select them
-				auto it = account_activities.begin();
-				for (size_t i = 0; i < max_account_activities; ++i)
-				{
-					if (rndIndexes.count(i))
-						batchIDs.append(*it);
-					++it;
-				}
+		// Get distances while not enough posts are got (double amount to get more randomness) or the loop counter reaches 250
+		while (post_distances.size() < (amount * 2) && loop_counter < 250) {
+			// Find random indexes for post_ids and vote_ids
+			std::set<int> rndIndexes;
+			while(rndIndexes.size() < max_account_activities && rndIndexes.size() < MAX_POSTS_FOR_FEED)
+				rndIndexes.insert(std::rand() % max_account_activities);
 
+			// Get categories of random selected posts	
+			//	Convert rndIndexes to bsoncxx::array of ids
+			bsoncxx::builder::basic::array post_ids;
+			for (const int i : rndIndexes) {
+				if (i < his_post_ids.size())
+					post_ids.append(his_post_ids[i]);
+				else
+					post_ids.append(his_vote_ids[i - his_post_ids.size()]);
 			}
+			
+			//	Get Cursor and doc-vectors of selected posts
+			std::map<std::string, std::vector<std::vector<float>>> lang_doc_vectors; //lang, list of doc-vectors
+			auto cursor = post_data.find(
+				make_document(
+					kvp("_id", make_document(kvp("$in", post_ids))),
+					kvp("doc_vectors", make_document(kvp("$exists", true))),
+					kvp("doc_vectors", make_document(kvp("$ne", NULL)))
+				)
+			);
 
-			// Get categories of them
-			std::vector<std::vector<float>> batchCategories;
-			batchCategories.reserve(batchCount);
-			{
-				auto cursor = post_data.find(make_document(kvp("_id", make_document(kvp("$in", batchIDs)))));
-				for (const auto& document : cursor) {
-					const auto elemCategories = document["categories"];
-					if (elemCategories.type() != bsoncxx::type::k_array)
-						continue; // Not analyzed
+			for (const auto& post_doc : cursor) {
+				// Get all doc-vectors of voted/posted content
+				try {
+					const bsoncxx::document::view doc_vectors = post_doc["doc_vectors"].get_document().value;
+					std::vector<float> vec = {};
 
-					const bsoncxx::array::view category{ elemCategories.get_array().value };
-					std::vector<float> data(46);
+					for (const auto& pair : doc_vectors) {
+						// Binary to vector
+						parseBinaryToVector<float>(pair, vec);
+						std::string current_lang = pair.key().to_string();
 
-					// Parse data and push it					
-					auto d_it = data.begin();
-					for (auto c_it = category.begin(); c_it != category.end(), d_it != data.end(); ++d_it, ++c_it)
-						*d_it = c_it->get_double().value;
-
-					batchCategories.push_back(data);
-				}
-			}
-
-			// Get similar Posts and reshape from 2d to 1d (flatten)
-			std::set<int> results;
-			{
-				// Search
-				const int k = abstraction_value + 5 + loop_counter;
-				std::vector<std::vector<int>> all_results;
-				Categories::getSimilarPostsByCategory(batchCategories, k, all_results);
-
-				// Flatten the 2d results			
-				for (const auto& r_item : all_results)
-					results.insert(r_item.begin(), r_item.end());
-
-			}
-
-			// We do not have to check langs, because only english posts are categorized and in our Index
-			// Check languages and if they are good, insert into post_results
-
-			// Insert in post_results
-			if (results.size() + post_results.size() <= amount) {
-				// Insert all Items, it is (maybe not) enough
-				post_results.insert(results.begin(), results.end());
-			}
-			else {
-				// Insert Random Elements
-				// Get random Indexes
-				const int rndElementsCount = amount - post_results.size();
-				std::set<int> rndIndexes = {};
-				while (rndIndexes.size() < rndElementsCount)
-					rndIndexes.insert(std::rand() % results.size());
-
-				// Insert these randoms Elements
-				size_t counter = 0;
-				for (auto it = results.begin(); it != results.end(); ++it, ++counter) {
-					if (rndIndexes.count(counter)) // Random Index reached ==> insert
-						post_results.insert(*it);
+						// Add to map
+						if (!lang_doc_vectors.count(current_lang))
+							lang_doc_vectors[current_lang] = {};
+						lang_doc_vectors[current_lang].push_back(vec);
+					}
+				}catch (std::exception ex) {
+					std::cout << "[ERROR] Cannot get the doc-vectors for this post: " << std::to_string(post_doc["_id"].get_int32().value) << std::endl;
 				}
 			}
 
-			// Next round
+			// Get similar posts for each lang
+			std::vector<knn_result_t> similar_result;
+			for(const auto& lang_query : lang_doc_vectors)
+				Categories::getSimilarPostsByDocVector(index_name, lang_query.first, lang_query.second, abstraction_value + loop_counter + 3, similar_result);
+
+			// Insert all of them into post_scores (lowest distance is the best) when the post is not inside account_activities
+			for (knn_result_t& result : similar_result) {
+				while (!result.empty()) {
+					const auto elem = result.top();
+					result.pop();
+
+					if (account_activities.count(elem.second))
+						continue; // Is his own vote/comment
+
+					// Push distance to map by inverting high to low values
+					if (!post_distances.count(elem.second))
+						post_distances[elem.second] = 0;
+					
+					post_distances[elem.second] += highToLowFunc(elem.first); 
+				}
+			}
+
 			++loop_counter;
 		}
+		
+		// Roulette Randomness
+		//	- Prepare Wheel
+		std::map<int, int> wheel_plate; // plates for this _id, post_id
+		int total = 0;
+		for (const auto& p_dis : post_distances) {			
+			for(int i = 0; i < p_dis.second; ++i, ++total)
+				wheel_plate[total] = p_dis.first;
+		}
+
+		// Get set with post_ids and size of the amount
+		std::set<int> ids_set;
+		while (ids_set.size() < amount) {
+			const int rnd_x = std::rand() % total;
+			if (wheel_plate.count(rnd_x))
+				ids_set.insert(wheel_plate[rnd_x]);
+		}
+
+		// Fill post_results with that set
+		post_results.reserve(post_results.size() + amount);
+		for (const int& _id : ids_set)
+			post_results.push_back(_id);
 	}
 
-	void start() {
+
+	int start() {	
 		// Start API
 		Listener::startAPI();
 
 		// Threads for Index Builds and sub-methods
 		//	* Post Category Index
-		std::thread([]() {
+		std::thread category_indexer_task([]() {
 			// Build Index and wait 15 Minutes to rebuild it
+			bool start_up = true;
 
 			while (1) {
-				Categories::buildIndex();
+				Categories::buildIndexes(start_up); // Do all in_parralel to increase startup speed
 				std::this_thread::sleep_for(std::chrono::minutes(15));
+
+				start_up = false;
 			}
-		}).detach();
+		}); 
 
 		//	* Account Interests Index
-		std::thread([]() {
+		std::thread account_indexer_task([]() {
 			// Build Index, then wait one Hour and finally rebuild ALL profiles (long and intense calculation), that 
 			// is why we first wait and then do it because on startup we need performance for other ressources...
 
@@ -157,95 +228,195 @@ namespace NswAPI {
 				std::this_thread::sleep_for(std::chrono::hours(1));
 				Accounts::set_all_account_profiles();
 			}		
-		}).detach();
+		});
+
+		category_indexer_task.join();
+		account_indexer_task.join();
+		return 0;
 	}
 
 
 	namespace Categories {
-		std::shared_ptr<hnswlib::AlgorithmInterface<float>> productionIndex = nullptr;
 
-		void buildIndex() {
-			// Establish connection
+		std::map<std::string, std::map<std::string, index_t>> ALL_INDEXES = {};
+
+		void buildOneIndexName(
+			const std::string index_name, 
+			const std::string id_source, 
+			const std::string& query
+		) {
+			// Create client, get matching ids and then the cursor			
+			bsoncxx::builder::basic::array post_ids;
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
-			auto collection = (*client)["hive-discover"]["post_data"];
-
-			// Prepare query
-			bsoncxx::types::b_date minDate = bsoncxx::types::b_date(std::chrono::system_clock::now() - std::chrono::hours{ 10 * 24 });
-			bsoncxx::v_noabi::document::view_or_value findQuery = make_document(
-				kvp("timestamp", make_document(kvp("$gt", minDate)))
-			);
-
-			// init AlgorithmInterface with 25 starting elements
-			size_t alg_ifcCapacity = 25;
-			//hnswlib::L2Space space(46);
-			std::shared_ptr<hnswlib::AlgorithmInterface<float>> currentIndex = std::shared_ptr<hnswlib::AlgorithmInterface<float>>(
-				new hnswlib::HierarchicalNSW<float>(&space, alg_ifcCapacity)
+			{
+				// Settings for finding				
+				auto col_post_data = (*client)["hive-discover"]["post_data"];
+				mongocxx::options::find opts;
+				opts.projection(make_document(kvp("_id", 1)));
+				auto source_col = (*client)["hive-discover"][id_source];		
+				
+				// Get all ids
+				for (const auto& doc : source_col.find(bsoncxx::from_json(query), opts))
+					post_ids.append(doc["_id"].get_int32().value);
+			}
+			
+			// Index-Building-Task Definition
+			const auto worker_task = [&post_ids, index_name](const std::string lang)->index_t {
+				// Get cursor for post_data	with elements from this lang
+				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
+				auto col_post_data = (*client)["hive-discover"]["post_data"];
+				mongocxx::cursor cursor = col_post_data.find(
+					make_document(
+						kvp("_id", make_document(kvp("$in", post_ids))),
+						kvp("doc_vectors." + lang, make_document(kvp("$exists", true)))
+					)
 				);
 
-			// Enter all docs
-			auto cursor = collection.find(findQuery);
-			size_t elementCounter = 0;
-			for (const auto& doc : cursor) {
-				const bsoncxx::document::element elemCategory = doc["categories"];
-				const bsoncxx::document::element elemId = doc["_id"];
+				// Init AlgorithmInterface
+				size_t alg_ifcCapacity = 100;
+				index_t current_index = index_t(
+					new hnswlib::HierarchicalNSW<float>(&space300, alg_ifcCapacity)
+				);
 
-				// Check if post is valid and prepared
-				if (elemCategory.type() != bsoncxx::type::k_array)
-					continue;
-				if (elemId.type() != bsoncxx::type::k_int32)
-					continue;
+				// Process all docs
+				size_t elementCounter = 0;
+				std::vector<float> vec = {};
+				for (auto& doc : cursor) {
+					// Parse binary form of doc_vectors to a std::vector<float>
+					parseBinaryToVector<float>(doc["doc_vectors"][lang], vec);
+					if (vec.size() != 300)
+						continue; // Some error <=> Do not enter this
 
-				// Convert categories to std::vector<float>
-				const bsoncxx::array::view category{ elemCategory.get_array().value };
-				std::vector<float> data(46);
-				auto d_it = data.begin();
-				for (auto c_it = category.begin(); c_it != category.end(), d_it != data.end(); ++d_it, ++c_it)
-					*d_it = c_it->get_double().value;
+					// Add item to index
+					hnswlib::labeltype _id = doc["_id"].get_int32().value;
+					current_index->addPoint(vec.data(), _id);
 
-				// add to index
-				hnswlib::labeltype _id = elemId.get_int32().value;
-				currentIndex->addPoint(data.data(), _id);
-				++elementCounter;
-
-				if (elementCounter >= alg_ifcCapacity) {
 					// Resize AlgorithmInterface
-					alg_ifcCapacity += 25;
-					static_cast<hnswlib::HierarchicalNSW<float>*>(currentIndex.get())->resizeIndex(alg_ifcCapacity);
+					++elementCounter;
+					if (elementCounter >= alg_ifcCapacity) {
+						alg_ifcCapacity += 100;
+						static_cast<hnswlib::HierarchicalNSW<float>*>(current_index.get())->resizeIndex(alg_ifcCapacity);
+					}
 				}
+
+				if (elementCounter <= 100) {
+					// To less elements
+					std::cout << "[INFO] Skipped entering a new doc-vectors-index named " << index_name << " for " << lang << "-posts because of only " << elementCounter << " available elements" << std::endl;
+					return nullptr;
+				}
+
+				std::cout << "[INFO] Successfully build a new doc-vectors-index named " << index_name << " for " << lang << "-posts with " << elementCounter << " elements" << std::endl;
+				return current_index;
+			};
+
+			// Start index-building-task for each lang
+			std::map<std::string, std::future<index_t>> lang_tasks;
+			const std::vector<std::string> lang_cols = (*client)["fasttext"].list_collection_names();
+			for (const std::string lang : lang_cols) {
+				lang_tasks.emplace(std::pair<std::string, std::future<index_t>>(lang, std::async(worker_task, lang)));
 			}
 
-			std::cout << "[INFO] Created PostIndex! Actual elements: " << elementCounter << std::endl;
-			productionIndex = currentIndex;
+			// Wait for tasks to finish and set to global map
+			std::map<std::string, index_t> lang_indexes;
+			for (auto& l_task : lang_tasks) {
+				l_task.second.wait();
+				lang_indexes[l_task.first] = l_task.second.get();
+			}
+				
+			ALL_INDEXES[index_name] = lang_indexes;
 		}
 
-		void getSimilarPostsByCategory(const std::vector<std::vector<float>>& query, const int k, std::vector<std::vector<int>>& result)
+		void buildIndexes(bool in_parralel)
 		{
-			if (productionIndex == nullptr)
-				return;
+			// Establish connections and get all index templates
+			std::vector<std::tuple<std::string, std::string, std::string>> indexname_target_query; // index-name, target collection and query on target collection
+			{
+				mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
+				auto col_knn_categories_index = (*client)["hive-discover"]["knn_categories_index"];
+				for (const auto& definition : col_knn_categories_index.find({})) {
+					const std::string elem_name = definition["name"].get_utf8().value.to_string();
+					const std::string elem_target_col = definition["target_col"].get_utf8().value.to_string();
+					const auto elem_query = definition["query"].get_document().value;
+					const int elem_minus_days = definition["minus_days"].get_int32().value; 
+					
+					// Build query-doc
+					bsoncxx::builder::basic::document post_data_query{};
+					for (auto& d : elem_query)
+						post_data_query.append(kvp(d.key(), d.get_value()));
 
-			for (const auto& q_data : query) {
-				// Search
-				auto gd = productionIndex->searchKnn(q_data.data(), k);
-				std::vector<int> posts;
-				posts.reserve(gd.size());
+					// Set minusDays
+					bsoncxx::types::b_date minDate = bsoncxx::types::b_date(std::chrono::system_clock::now() - std::chrono::hours{ elem_minus_days * 24 });
+					post_data_query.append(kvp("timestamp", make_document(kvp("$gt", minDate))));	
 
-				// Push them
-				while (!gd.empty()) {
-					const auto element = gd.top();
-					posts.push_back(element.second);
-					gd.pop();
+					indexname_target_query.push_back(
+						std::tuple<std::string, std::string, std::string>(elem_name, elem_target_col, bsoncxx::to_json(post_data_query.extract()))
+					);
 				}
 
-				result.push_back(posts);
 			}
+			
+			// Build all of them
+			for (auto& definition : indexname_target_query)
+				buildOneIndexName(std::get<0>(definition), std::get<1>(definition), std::get<2>(definition));
+
 		}
 
+		void getSimilarPostsByDocVector(
+			std::string index_name, 
+			std::string lang,
+			const std::vector<std::vector<float>>& queries,
+			const int k,
+			std::vector<knn_result_t>& results	
+		) {
+			// Get Index-Name
+			if (!ALL_INDEXES.count(index_name)) 
+				index_name = DEFAULT_INDEX_NAME; // Index does not exist ==> use default one
+			if (!ALL_INDEXES.count(index_name))
+				return; // No index exists (maybe not yet) ==> just abort
+
+			// Get Index-Lang
+			if (!ALL_INDEXES[index_name].count(lang))
+				lang = DEFAULT_LANG; // Lang does not exist ==> use default one
+			if (!ALL_INDEXES[index_name].count(lang) || !ALL_INDEXES[index_name][lang])
+				return; // maybe nullptr <=> Not enough posts for this lang
+
+			// Sure, we got our index ==> do KNN-Search
+			const index_t index = ALL_INDEXES[index_name][lang];
+			for (const auto& q : queries) 
+				results.push_back(index->searchKnn(q.data(), k));		
+		}
+
+		void getSimilarPostsByDocVector(
+			std::string index_name,
+			std::string lang,
+			const std::vector<std::vector<float>>& queries,
+			const int k,
+			std::vector<std::vector<int>>& results
+		) {
+			// Get priority Queue
+			std::vector<knn_result_t> r_priority_queue;
+			getSimilarPostsByDocVector(index_name, lang, queries, k, r_priority_queue);
+
+			// Convert priority queue into vector (remove distance)
+			for (knn_result_t& r_knn : r_priority_queue) {
+				std::vector<int> r_ids;
+
+				// Get element from queue and push id of it
+				while (!r_knn.empty()) {						
+					r_ids.push_back(r_knn.top().second);
+					r_knn.pop();
+				}
+
+				results.push_back(r_ids);
+			}
+		}
 	}
 
 	namespace Accounts {
-		std::shared_ptr<hnswlib::AlgorithmInterface<float>> productionIndex = nullptr;
+		std::map<std::string, index_t> ALL_INDEXES = {}; // index for each (available) lang
+		index_t productionIndex = nullptr;
 
-		std::vector<float> calc_account_profile(const int account_id) {
+		std::map<std::string, std::vector<float>> calc_account_profile(const int account_id) {
 			// Get account activites
 			bsoncxx::builder::basic::array activity_ids;
 			{
@@ -266,36 +437,50 @@ namespace NswAPI {
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 			auto post_data = (*client)["hive-discover"]["post_data"];
 			mongocxx::options::find opts;
-			opts.projection(make_document(kvp("categories", 1)));
+			opts.projection(make_document(kvp("doc_vectors", 1)));
 			auto cursor = post_data.find(
 				make_document(
-					kvp("_id", make_document(kvp("$in", activity_ids)))
+					kvp("_id", make_document(kvp("$in", activity_ids))),
+					kvp("doc_vectors", make_document(kvp("$exists", true)))
 			), opts);
 
-			// Enter all of them
-			std::vector<float> account_data(46);
-			size_t post_count = 0;
-			for (const auto& post_doc : cursor) {
-				const auto elemCats = post_doc["categories"];
-				if (elemCats.type() != bsoncxx::type::k_array)
-					continue; // Not usable
+			// Enter activities for each lang
+			std::map<std::string, std::vector<float>> vector_per_lang;
+			std::map<std::string, int> vector_per_lang_counter;
+			int total_posts = 0; // Count of posts (multilingual and nolingual posts count also as 1)
 
-				// Add to account_data
-				post_count += 1;
-				const bsoncxx::array::view category{ elemCats.get_array().value };
-				auto it = category.begin();
-				for (size_t i = 0; i < account_data.size(); ++i, ++it)
-					account_data[i] += it->get_double().value;
+			std::vector<float> current_vec;
+			for (const auto& post_doc : cursor) {
+				// Iterate throug every lang of this post
+				total_posts += 1;
+				const bsoncxx::document::view doc_vectors = post_doc["doc_vectors"].get_document().value;
+				for (const auto& pair : doc_vectors) {
+					// Parse pair to vector<float> and string
+					parseBinaryToVector<float>(pair, current_vec);
+					std::string current_lang = pair.key().to_string();
+
+					if (!vector_per_lang.count(current_lang)) {
+						// First vector of this lang
+						vector_per_lang[current_lang] = std::vector<float>(300);
+						vector_per_lang_counter[current_lang] = 0;
+					}
+
+					// Add element-wise (directly as an average)
+					auto doc_it = current_vec.begin();
+					for (auto lang_it = vector_per_lang[current_lang].begin(); lang_it != vector_per_lang[current_lang].end(); ++lang_it, ++doc_it)
+						*lang_it = (*lang_it + * doc_it) / 2;
+
+					vector_per_lang_counter[current_lang] += 1;
+				}
 			}
 
-			if (post_count == 0)
-				return {}; // Nothing is there
+			// Ensure to have at least 35% of the languages
+			for (const auto& lang_counter : vector_per_lang_counter) {
+				if ((lang_counter.second / total_posts) < 0.35) // Then remove lang-item
+					vector_per_lang.erase(lang_counter.first);
+			}
 
-			// Calc average and return it
-			for (auto& x : account_data)
-				x = x / post_count;
-
-			return account_data;
+			return vector_per_lang;
 		}
 
 		void set_all_account_profiles() {
@@ -319,11 +504,11 @@ namespace NswAPI {
 			// Bulk Settings
 			mongocxx::options::bulk_write bulkWriteOption;
 			bulkWriteOption.ordered(false);
-			const int BULK_SIZE = 25;
+			const int BULK_SIZE = 5;
 			auto bulk_enter_task = std::async([]() {return true; }); // Create dummy task
 
 			while (all_accounts.size()) {
-				std::map<int, std::future<std::vector<float>>> account_results; // id, result-future
+				std::map<int, std::future<std::map<std::string, std::vector<float>>>> account_results; // id, result-future
 
 				// Fill results with tasks until max reaches or no accounts left
 				while (all_accounts.size() && account_results.size() < BULK_SIZE) {
@@ -338,23 +523,32 @@ namespace NswAPI {
 				std::shared_ptr<mongocxx::bulk_write> bulk = std::make_shared<mongocxx::bulk_write>(
 					collection.create_bulk_write(bulkWriteOption)
 				);
+
+
 				for (auto& result_pair : account_results) {
-					std::vector<float> interests = result_pair.second.get();
-					if (interests.size() == 0)
-						continue; // Nothing enterable
+					// Convert map to object and add bulk-update-model
+					// lang_vector : [lang, vector]
+					for (const auto& lang_vector : result_pair.second.get()) {
+						// Convert vector to binary and document for update
+						bsoncxx::types::b_binary bin_data{};
+						bin_data.bytes = parseVectorToBinary(lang_vector.second, bin_data.size);
 
-					// Convert std::vector to bson::array
-					bsoncxx::builder::basic::array barr_profile;				
-					for (const auto& x : interests)
-						barr_profile.append(x);				
+						//all_bin_data.push_back(bin_data);
+						bsoncxx::document::value update_doc = make_document(
+							kvp("interests." + lang_vector.first, bin_data)
+						);
 
-					// Define update model and append it to the bulk
-					const auto update_model = mongocxx::model::update_one(
-						make_document(kvp("_id", result_pair.first)), // Filter
-						make_document(kvp("$set", make_document(kvp("interests", barr_profile)))) // Update
-					);
-					bulk->append(update_model);
-					++bulk_counter;
+						// Create Bulk-Model and append it
+						const auto update_model = mongocxx::model::update_one(
+							make_document(kvp("_id", result_pair.first)), // Filter
+							make_document(kvp("$set", update_doc)) // Update
+						);
+						bulk->append(update_model);
+						++bulk_counter;
+
+						// Deallocate Memory (it was copied inside the update_one-model)
+						delete[] bin_data.bytes;
+					}
 				}
 
 				if (bulk_counter == 0)
@@ -390,73 +584,74 @@ namespace NswAPI {
 			// Establish connection and prepare query
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 			auto collection = (*client)["hive-discover"]["account_info"];
-			bsoncxx::v_noabi::document::view_or_value findQuery = make_document(
+			auto cursor = collection.find(make_document(
 				kvp("interests", make_document(kvp("$exists", true)))
-			);
+			));
 
-			// init AlgorithmInterface with 25 starting elements
-			size_t alg_ifc_capacity = 25;
-			//hnswlib::L2Space space(46);
-			std::shared_ptr<hnswlib::AlgorithmInterface<float>> current_index = std::shared_ptr<hnswlib::AlgorithmInterface<float>>(
-				new hnswlib::HierarchicalNSW<float>(&space, alg_ifc_capacity)
-				);
+			std::map<std::string, index_t> lang_indexes; // index for each lang
+			std::map<std::string, int> lang_counter; // counter for each lang items
+			std::map<std::string, int> lang_index_capacities; // capacities for each lang index
 
-			// Enter all docs
-			auto cursor = collection.find(findQuery);
-			size_t elementCounter = 0;
-			for (const auto& account_doc : cursor) {			
-				const int account_id = account_doc["_id"].get_int32().value;
-				const bsoncxx::document::element elemInterests = account_doc["interests"];
-				if (elemInterests.type() != bsoncxx::type::k_array)
-					continue;
+			// Enter all interests in all lang-indexes
+			std::vector<float> vec;
+			for (const auto& account_doc : cursor) {
+				const int acc_id = account_doc["_id"].get_int32().value;
+				const bsoncxx::document::view acc_interests = account_doc["interests"].get_document().value;
 
-				// Convert bson::array to std::vector<float>
-				const bsoncxx::array::view interests{ elemInterests.get_array().value };
-				std::vector<float> data(46);
-				auto d_it = data.begin();
-				for (auto c_it = interests.begin(); c_it != interests.end(), d_it != data.end(); ++d_it, ++c_it)
-					*d_it = c_it->get_double().value;
+				// Iterate through all of his langs
+				for (const auto& lang_bindata : acc_interests) {
+					// Binary to vector
+					parseBinaryToVector<float>(lang_bindata, vec);
+					std::string current_lang = lang_bindata.key().to_string();
 
-				// Add Data Entry to Index and Increment counter
-				hnswlib::labeltype _id = account_id;
-				current_index->addPoint(data.data(), _id);
-				++elementCounter;
+					if (!lang_counter.count(current_lang)) {
+						// First item of that lang ==> create counter, alg_capacity and init index
+						lang_counter[current_lang] = 0;
+						lang_index_capacities[current_lang] = 100;
+						lang_indexes[current_lang] = std::shared_ptr<hnswlib::AlgorithmInterface<float>>(
+							new hnswlib::HierarchicalNSW<float>(&space300, lang_index_capacities[current_lang])
+						);
+					}
 
-				// Check, if we need to resize
-				if (elementCounter >= alg_ifc_capacity) {
-					// Resize
-					alg_ifc_capacity += 25;
-					static_cast<hnswlib::HierarchicalNSW<float>*>(current_index.get())->resizeIndex(alg_ifc_capacity);
+					// Add to this index
+					lang_counter[current_lang] += 1;
+					if (lang_counter[current_lang] >= lang_index_capacities[current_lang]) {
+						// Resize Index
+						lang_index_capacities[current_lang] += 10;
+						static_cast<hnswlib::HierarchicalNSW<float>*>(lang_indexes[current_lang].get())->resizeIndex(lang_index_capacities[current_lang]);
+					}
+					lang_indexes[current_lang]->addPoint(vec.data(), acc_id);
 				}
 			}
 
-			productionIndex = current_index;
-			std::cout << "[INFO] Created Account-Index with " << alg_ifc_capacity << " elements! " << std::endl;
+			// Keep only indexes with at least 100 accounts
+			for (const auto& lang_counting : lang_counter) {
+				if (lang_counting.second < 100) // Remove it
+					lang_indexes.erase(lang_counting.first);
+			}
+
+			// Finally push it to production
+			ALL_INDEXES = lang_indexes;
+			std::cout << "[INFO] Created all Account-Indexes: " << std::endl;
+			for(const auto& lang_idx : lang_indexes) 
+				std::cout << "	- " << lang_idx.first << "-index with " << lang_counter[lang_idx.first] << " elements" << std::endl;
 		}
 
 		void getSimilarAccounts(
-			const std::vector<std::vector<float>>& query,
+			const std::map<std::string, std::vector<float>>& query,
 			const int k,
-			std::vector<std::vector<int>>& result
+			std::map<std::string, knn_result_t>& result
 		) {
-			if (productionIndex == nullptr)
-				return;
+			// Copy indexes
+			auto indexes = ALL_INDEXES;
 
-			for (const auto& q_data : query) {
-				// Search
-				auto gd = productionIndex->searchKnn(q_data.data(), k);
-				std::vector<int> posts;
-				posts.reserve(gd.size());
+			for (auto& lang_q : query) {
+				if (!indexes.count(lang_q.first))
+					continue; // Lang and Index not available
 
-				// Push them
-				while (!gd.empty()) {
-					const auto element = gd.top();
-					posts.push_back(element.second);
-					gd.pop();
-				}
-
-				result.push_back(posts);
-			}
+				// Do Search
+				result[lang_q.first] = indexes[lang_q.first]->searchKnn(lang_q.second.data(), k);
+			}			
 		}
 	}
 	

@@ -28,7 +28,6 @@ find_package(nlohmann_json REQUIRED)
 
 add_subdirectory("libs/Simple-Web-Server") 
 add_subdirectory("libs/hnswlib") 
-# add_subdirectory("libs/thread-pool") 
 
 # Add Source Files: all .cpp from /src...
 file(GLOB PROJECT_SRC src/*.cpp src/*/*.cpp src/*/*/*.cpp)
@@ -43,11 +42,11 @@ set_property (TARGET ${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(${PROJECT_NAME} simple-web-server)
+target_link_libraries(${PROJECT_NAME} hnswlib)
 
 # Link extern libraries
 target_link_libraries(${PROJECT_NAME} ${Boost_LIBRARIES} ${Boost_SYSTEM_LIBRARY} ${Boost_FILESYSTEM_LIBRARY})
 target_link_libraries(${PROJECT_NAME} Boost::boost Boost::system Boost::program_options Boost::context)
-target_link_libraries(${PROJECT_NAME} hnswlib)
 target_link_libraries(${PROJECT_NAME} nlohmann_json)
 target_link_libraries(${PROJECT_NAME} ${LIBMONGOCXX_LIBRARIES})
 target_link_libraries(${PROJECT_NAME} ${LIBBSONCXX_LIBRARIES})
