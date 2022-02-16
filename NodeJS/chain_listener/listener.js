@@ -239,6 +239,8 @@ async function repairDatabase(batch_size=4096){
 }
 
 async function main(){
+    const startTime = process.hrtime();
+
     if(!currentBlockNum)
         await getStartBlockNum();
 
@@ -277,6 +279,25 @@ async function main(){
         process.exit(-1);
     })
     
+    // Make and Wait Heartbeat Request
+    const heartbeat = new Promise(resolve => {
+            // Calc time spend per block
+            const hrtime = process.hrtime(startTime);
+            const seconds = ((hrtime[0] + (hrtime[1] / 1e9)) / amount).toFixed(2);
+
+            // Make request
+            request(process.env.CHAIN_LISTENER_HEARBEAT_URL + seconds.toString(), {method : "GET"}, (err, res, body) => {
+                if(err) {
+                    // Log Error
+                    console.error(err); 
+                    logging.writeData(logging.app_names.chain_listener, {"msg" : "Hearbeat Failed", "info" : {"err" : err.toString()}}, 1);
+                }
+            
+                // Resolve in any way (even if error because this error is not important)
+                resolve();
+            });
+        });
+    await heartbeat;
 
     // Do it again in 1 Seconds because (maybe) not all Blocks are analyzed
     setTimeout(main, 1000);

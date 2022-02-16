@@ -6,7 +6,7 @@ from config import *
 
 class MongoDBAsync:
     def __init__(self, post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False) -> None:
-        self.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_HOST, DATABASE_PORT, username=DATABASE_USER, password=DATABASE_PASSWORD)
+        self.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_CONNECTION_STR)
 
         if post_table:
             self.post_table = self.mongo_client[DATABASE_NAME].posts # OLD
@@ -24,7 +24,7 @@ class MongoDBAsync:
             
     @staticmethod
     def init_global(post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False) -> None:
-        MongoDBAsync.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_HOST, DATABASE_PORT, username=DATABASE_USER, password=DATABASE_PASSWORD)
+        MongoDBAsync.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_CONNECTION_STR)
 
         if post_table:
             MongoDBAsync.post_table = MongoDBAsync.mongo_client[DATABASE_NAME].posts
@@ -43,7 +43,7 @@ class MongoDBAsync:
     
 class MongoDB:
     def __init__(self, post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False) -> None:
-        self.mongo_client = pymongo.MongoClient(DATABASE_HOST, DATABASE_PORT, username=DATABASE_USER, password=DATABASE_PASSWORD)
+        self.mongo_client = pymongo.MongoClient(MONGO_CONNECTION_STR)
 
         if post_table:
             self.post_table = self.mongo_client[DATABASE_NAME].posts
@@ -56,7 +56,7 @@ class MongoDB:
 
     @staticmethod
     def init_global(post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False) -> None:
-        MongoDB.mongo_client = pymongo.MongoClient(DATABASE_HOST, DATABASE_PORT, username=DATABASE_USER, password=DATABASE_PASSWORD)
+        MongoDB.mongo_client = pymongo.MongoClient(MONGO_CONNECTION_STR)
 
         if post_table:
             MongoDB.post_info = MongoDB.mongo_client[DATABASE_NAME].post_info

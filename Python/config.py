@@ -4,6 +4,7 @@ HOST_PORT = 888
 WORD2VEC_MODEL_PATH = "data/word2vec.gen"
 FASTTEXT_MODEL_PATH = "data/fasttext/fasttext_gensim.model"
 TEXTCNN_MODEL_PATH = "data/TextCNN_Model_7.pt" 
+StockCommentsSenitment_MODEL_PATH = "data/StockCommentsSenitment_Model2.pt"
 LANG_FASTTEXT_MODEL = "data/fasttext-lang.ftz"
 FAKENEWSCNN_MODEL_PATH = "data/FakeNewsCNN.pt"
 
@@ -27,12 +28,18 @@ DATABASE_PORT = int(os.environ.get("MongoDB_Port", 27017))
 DATABASE_NAME = os.environ.get("MongoDB_Name", None)
 DATABASE_USER = os.environ.get("MongoDB_User", None)
 DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
+MONGO_CONNECTION_STR = os.environ.get("MongoDB_Connection_String", None)
 
 FEED_API_PORT = int(os.environ.get("NMSLIB_API_Port", -1))
 WORDVEC_API_PORT = os.environ.get("WordVecApi_Port", 7879)
 AMABLE_DB_Port = os.environ.get("AmableDB_Port", 3399)
 
 print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
+
+LANG_DETECTOR_HEARTBEAT_URL = os.environ.get("LANG_DETECTOR_HEARTBEAT_URL", None)
+CATEGORIZER_HEARTBEAT_URL = os.environ.get("CATEGORIZER_HEARTBEAT_URL", None)
+VECTORIZER_HEARTBEAT_URL = os.environ.get("VECTORIZER_HEARTBEAT_URL", None)
+SENTIMENTER_HEARTBEAT_URL = os.environ.get("SENTIMENTER_HEARTBEAT_URL", None)
 
 # Ac-Bot
 AC_BOT_POSTING_WIF = os.environ.get("AC_BOT_POSTING_WIF", None)
@@ -70,24 +77,54 @@ class statics:
 
 
 
-CATEGORIES = [['politic', 'politics', 'election'], ['technology', 'tech', 'technical', 'blockchain'], ['art', 'painting', 'drawing', 'sketch'], ['animal', 'pet'], ['music'],
-            ['travel'], ['fashion', 'style', 'mode', 'clothes'], ['gaming', 'game', 'splinterlands'], ['purpose'],
-            ['food', 'eat', 'meat', 'vegetarian', 'vegetable', 'vegan', 'recipe'], ['wisdom'], ['comedy', 'funny', 'joke'],
-            ['crypto'], ['sports', 'sport', 'training', 'train', 'football', 'soccer', 'tennis', 'golf', 'yoga', 'fitness'],
-            ['beauty', 'makeup'], ['business', 'industry'], ['lifestyle', 'life'],
-            ['nature'], ['tutorial', 'tut', 'diy', 'do-it-yourself', 'selfmade', 'craft', 'build-it', 'diyhub'],
-            ['photography', 'photo', 'photos'], ['story'], ['news', 'announcement', 'announcements'],
-            ['covid-19', 'coronavirus', 'corona', 'quarantine'], ['health', 'mentalhealth', 'health-care'], 
-            ['development', 'dev', 'coding', 'code'],
-            ['computer', 'pc'], ['education', 'school', 'knowledge' , 'learning'],
-            ['introduceyourself', 'first'], ['science', 'sci', 'biology', 'math', 'bio', 'mechanic', 'mechanics', 'physics', 'physics'],
-            ['film', 'movie'], ['challenge', 'contest'],
-            ['gardening', 'garden'], ['history', 'hist', 'past', 'ancient'], ['society'], ['media'],
-            ['economy', 'economic', 'economics', 'market', 'marketplace'], ['future', 'thoughts'],
-            ['psychology', 'psycho', 'psych'], ['family', 'fam'], ['finance', 'money', 'investing', 'investement'], 
-            ['work', 'working', 'job'],
-            ['philosophy'], ['culture'], ['trading', 'stock', 'stocks', 'stockmarket'],
-            ['motivation', 'motivate'], ['statistics', 'stats', 'stat', 'charts']] 
+CATEGORIES = [
+    ['politic', 'politics', 'election'], 
+    ['technology', 'tech', 'technical', 'blockchain'], 
+    ['art', 'painting', 'drawing', 'sketch'], 
+    ['animal', 'pet'], 
+    ['music'],
+    ['travel'], 
+    ['fashion', 'style', 'mode', 'clothes'], 
+    ['gaming', 'game', 'splinterlands', 'hivegaming', 'dcity', 'risingstar'], 
+    ['purpose'],
+    ['food', 'eat', 'meat', 'vegetarian', 'vegetable', 'vegan', 'recipe', 'foodie'], 
+    ['wisdom', 'poetry'], 
+    ['comedy', 'funny', 'joke'],
+    ['crypto', 'cryptocurrency', 'nft'], 
+    ['sports', 'sport', 'training', 'train', 'football', 'soccer', 'tennis', 'golf', 'yoga', 'fitness', 'sportstalk'],
+    ['beauty', 'makeup'], 
+    ['business', 'industry'], 
+    ['lifestyle', 'life'],
+    ['nature'], 
+    ['tutorial', 'tut', 'diy', 'do-it-yourself', 'selfmade', 'craft', 'build-it', 'diyhub'],
+    ['photography', 'photo', 'photos', 'photofeed'], 
+    ['blog', 'writing', 'story'], 
+    ['news', 'announcement', 'announcements'],
+    ['covid-19', 'coronavirus', 'corona', 'quarantine'], 
+    ['health', 'mentalhealth', 'health-care'], 
+    ['development', 'dev', 'coding', 'code'],
+    ['computer', 'pc'], 
+    ['education', 'school', 'knowledge' , 'learning', 'lern'],
+    ['introduceyourself', 'first'], 
+    ['science', 'sci', 'biology', 'math', 'bio', 'mechanic', 'mechanics', 'physics', 'physics'],
+    ['film', 'movie'], 
+    ['challenge', 'contest'],
+    ['gardening', 'garden'], 
+    ['history', 'hist', 'past', 'ancient'], 
+    ['society'], 
+    ['media'],
+    ['economy', 'economic', 'economics', 'market', 'marketplace'], 
+    ['future', 'thoughts'],
+    ['psychology', 'psycho', 'psych'], 
+    ['family', 'fam'], 
+    ['finance', 'money', 'investing', 'investement'], 
+    ['work', 'working', 'job'],
+    ['philosophy', 'poetry'], 
+    ['culture'], 
+    ['trading', 'stock', 'stocks', 'stockmarket'],
+    ['motivation', 'motivate'], 
+    ['statistics', 'stats', 'stat', 'charts']
+] 
 
 
 BANNED_WORDS = [

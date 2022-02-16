@@ -1,16 +1,11 @@
 import asyncio, time
-import json
-import math
 import requests
-from datetime import timezone, timedelta, datetime
 import sys, os
 sys.path.append(os.getcwd() + "/.")
 
-import base64
 import torch as T
 import numpy as np
 
-import aiohttp
 from pymongo.errors import BulkWriteError
 from pymongo import UpdateMany, UpdateOne
 
@@ -54,38 +49,14 @@ def remove_stopwords(tok_body : list) -> str:
 
     return " ".join([word for word in tok_body if word not in stopwords.words("english")])
 
-async def get_word_vectors(tok_body : list) -> list:
-    server_vectors = []
-    # Get them from the server
-    async with aiohttp.ClientSession(headers={'Content-Type': 'application/json'}) as session:
-        # Async Session
-        url = f"https://word2vec.hive-discover.tech/vector"
-        async with session.post(url, json=tok_body) as response:        
-            if not response or response.status != 200:
-                # Network Error
-                print("Network Error while getting Vectors from API!")
-                print(response)
-                print(response.status)
-                print(await response.text())
-                time.sleep(15)
-                exit(-2)
-
-            data = json.loads(await response.text())
-            if "status" not in data or data["status"] != "ok":
-                # Server Error
-                print("Server Error while getting Vectors from API!")
-                print(response)
-                print(await response.text())
-                time.sleep(15)
-                exit(-3)
-
-            # Got everything
-            server_vectors = data["vectors"]
-
-    # Decode vector map
-    for word in server_vectors.keys():
-        d_bytes = base64.b64decode(server_vectors[word])
-        server_vectors[word] = np.frombuffer(d_bytes, dtype=np.float64)
+async def get_word_vectors(tok_body : list) -> dict:
+    # Retrieve Word-Vectors from MongoDB and decode them to np.array
+    server_vectors = {} 
+    doc_cursor = MongoDBAsync.mongo_client["fasttext"].en.find({"_id" : {"$in" : tok_body}})
+    async for document in doc_cursor:
+        # Decode Binary to np.array and add to dict
+        vector = np.frombuffer(document["v"], dtype=np.float32)
+        server_vectors[document["_id"]] = vector
 
     return server_vectors
 
@@ -142,7 +113,7 @@ async def process_one_post(post : dict) -> None:
     statics.Bulk_PostData_Updates.append(
         UpdateOne({"_id" : post["_id"]}, {"$set" : {
             "categories" : categories, 
-            "doc_vector" : doc_vector, 
+            #"doc_vector" : doc_vector, 
             "fakenews_prob" : fakenews_prob,
             "tokens" : { "known" : known_tokens, "unknown" : unknown_tokens }
             }
@@ -167,19 +138,14 @@ async def run(BATCH_SIZE : int = 25) -> None:
 
     while 1:
         tasks = []
+        start_time = time.time()
 
         # Get (randomly) open posts
         open_posts_ids = []
         async for current_post in MongoDBAsync.post_data.aggregate(AGGREGATION_PIPELINE):   
             if len(open_posts_ids) >= BATCH_SIZE:
                 break
-            open_posts_ids.append(current_post["_id"])
-
-        # No open_posts? ==> wait half a minute and continue
-        if len(open_posts_ids) == 0:
-            await asyncio.sleep(30)
-            continue
-
+            open_posts_ids.append(current_post["_id"])     
 
         # Got something to do ==> Get text-data and start processing
         async for current_post in MongoDBAsync.post_text.find({"_id" : {"$in" : open_posts_ids}}):
@@ -216,10 +182,14 @@ async def run(BATCH_SIZE : int = 25) -> None:
         # Do all updates
         await asyncio.wait([doPostDataUpdate(), doPostTextUpdate()])
             
-        # Wait a bit (if tasks was not full ==> relax CPU and repair)
-        print(f"Tasks ran: {len(tasks)}")   
-        if len(tasks) < BATCH_SIZE:
-            await asyncio.sleep(60)
+        # Send heartbeat
+        elapsed_time = (time.time() - start_time) * 1000
+        print(f"[INFO] {len(tasks)} Tasks ran successfully in {elapsed_time}ms")     
+        requests.get(CATEGORIZER_HEARTBEAT_URL, params={"msg" : "OK", "ping" : elapsed_time})
+
+        # No open_posts? ==> wait
+        if len(open_posts_ids) == 0:
+            await asyncio.sleep(10)
             
 
 def start() -> None:
