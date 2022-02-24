@@ -47,7 +47,6 @@ namespace ImageAPI {
 			using namespace Endpoints;
 			server.resource["^/$"]["POST"] = index;
 
-			server.resource["^/text-searching$"]["POST"] = text_searching;
 			server.resource["^/similar-searching$"]["POST"] = similar_searching;
 		}
 
@@ -66,88 +65,18 @@ namespace ImageAPI {
 			// All over POST-Method
 
 			void index(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+				// Server Ready and not shutting down?
+				if (Helper::serverIsReady(response, request) == false)	return;
+
 				nlohmann::json resBody;
 				resBody["status"] = "ok";
 				Helper::writeJSON(response, resBody);
 			}
 
-			void text_searching(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
-				std::thread([](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
-					nlohmann::json reqBody, resBody;
-
-					try {
-						// Parse request Body			
-						Helper::parseBody(request, reqBody);
-						if (!reqBody.count("query"))
-							throw std::runtime_error("query not found");
-						if (!reqBody.count("amount"))
-							reqBody["amount"] = 100;
-
-						const std::string query = boost::algorithm::to_lower_copy(reqBody["query"].get<std::string>());
-						const size_t amount = reqBody["amount"].get<size_t>();
-
-						// Split query in tokens
-						const std::vector<std::string> query_tokens = tokenizer(query, ' ');
-						const int query_token_len = query_tokens.size();
-						bsoncxx::builder::basic::array barr_tokens = {};
-						for (const auto& tok : query_tokens)
-							barr_tokens.append(tok);
-
-						// Establish Connection
-						auto client = GLOBAL::MongoDB::mongoPool.acquire();
-						auto db_fasttext = (*client)["fasttext"];
-
-						// Vectorize query in en-lang
-						std::vector<float> vectored_query(300); // vectorized query
-						auto cursor = db_fasttext["en"].find(make_document(kvp("_id", make_document(kvp("$in", barr_tokens)))));
-						for (const auto& tok_doc : cursor) {
-							// Convert Binary to Vector
-							const auto bin_data = tok_doc["v"].get_binary();
-							std::vector<float> current_vector = {};
-							{
-								// Set size and enter all elements
-								const uint8_t* first = bin_data.bytes;
-								const uint32_t b_size = bin_data.size;
-								current_vector.resize(b_size / sizeof(float));
-
-								for (size_t i = 0; i < b_size / sizeof(float); ++i)
-									current_vector[i] = *(reinterpret_cast<const float*>(first + i * sizeof(float)));
-							}
-
-							float idf = 0;
-							if (tok_doc["idf"].type() == bsoncxx::type::k_int32)
-								idf = static_cast<float>(tok_doc["idf"].get_int32().value);
-							else if (tok_doc["idf"].type() == bsoncxx::type::k_double)
-								idf = tok_doc["idf"].get_double().value;
-
-							auto tok_it = current_vector.begin();
-							for (auto vq_it = vectored_query.begin(); vq_it != vectored_query.end(), tok_it != current_vector.end(); ++vq_it, ++tok_it)
-								*vq_it += *tok_it * idf * (1.0f / query_token_len);
-						}
-
-						// Searching similar items to query-vector
-						std::vector<std::vector<int>> knn_res;
-						TextSearch::search({ vectored_query }, amount, knn_res);
-
-						// Build response
-						resBody["status"] = "ok";
-						if (knn_res.size())
-							resBody["results"] = knn_res[0]; // If something is found
-						else
-							resBody["results"] = std::vector<float>(); // Nothing was found
-
-						Helper::writeJSON(response, resBody);
-					}
-					catch (std::exception ex) {
-						std::cout << "[ERROR] Exception raised at ImageAPI text-search: " << ex.what() << std::endl;
-						resBody["status"] = "failed";
-						resBody["error"] = ex.what();
-						Helper::writeJSON(response, resBody, "500");
-					}
-					}, response, request).detach();
-			}
-
 			void similar_searching(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+				// Server Ready and not shutting down?
+				if (Helper::serverIsReady(response, request) == false)	return;
+
 				std::thread([](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
 					nlohmann::json reqBody, resBody;
 

@@ -24,8 +24,6 @@ namespace ImageAPI {
 
 			void index(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request);
 
-			void text_searching(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request);
-
 			void similar_searching(std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request);
 		}
 	}

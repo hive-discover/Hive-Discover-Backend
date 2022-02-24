@@ -147,7 +147,6 @@ namespace ImageAPI {
 			return arr;
 		}
 
-
 		void addSimilarImages(const int img_id)
 		{
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
@@ -173,7 +172,7 @@ namespace ImageAPI {
 			//  (just url changed) images get machted
 			std::vector<int> results;
 			{
-				// -k = 100 to have images from other posts as well
+				// k = 100 to have images from other posts as well
 				const int k = 100;
 				knn_result_t prio_queue = producton_index->searchKnn(features.data(), k);
 
@@ -223,15 +222,18 @@ namespace ImageAPI {
 			auto result_it = results.begin();
 			if (results.size() >= 9)
 				result_it += results.size() - 9;
-			
-			
+					
 			col_img_data.update_one(
 				make_document(kvp("_id", img_id)), // Filter
-				make_document(kvp("$set", make_document(kvp("sim", VectorToBsonArrayReversed(results.end() - 1, result_it - 1))))) // Update
+				make_document(kvp("$set", // Update
+					make_document(
+						kvp("sim", VectorToBsonArrayReversed(results.end() - 1, result_it - 1))
+					)
+				)) 
 			);
 		}
 
-		void calcSimilarities() {
+		void calcAllSimilarities() {
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
 			auto col_img_data = (*client)["images"]["img_data"];
 			mongocxx::options::find find_op;
@@ -262,97 +264,88 @@ namespace ImageAPI {
 
 			std::cout << "[INFO] Calculated Similar Images" << std::endl;
 		}
-	}
 
-	namespace TextSearch {
-		index_t producton_index = nullptr;
-
-		void buildIndex() {
-			// Init AlgorithmInterface
-			size_t alg_ifcCapacity = 100;
-			index_t current_index = index_t(
-				new hnswlib::HierarchicalNSW<float>(&space300, alg_ifcCapacity)
-			);
-
-			// Establish Connetion and Cursor to retrieve all text-docs
+		void calcNewImgsSimilartities() {
+			// Establish Connection and prepare the Cursor
 			mongocxx::v_noabi::pool::entry client = GLOBAL::MongoDB::mongoPool.acquire();
-			auto col_post_data = (*client)["images"]["post_text"];
-			mongocxx::cursor cursor = col_post_data.find(
-				make_document(
-					kvp("doc_vectors", make_document(kvp("$ne", NULL)))
-				)
-			);
+			auto col_img_data = (*client)["images"]["img_data"];
+			auto cursor = col_img_data.find(make_document(kvp("sim", make_document(kvp("$exists", false)))));
 
-			// Enter all Texts
-			size_t alg_elem_counter = 0;
-			std::vector<float> vec;
-			for (const auto& text_doc : cursor) {
-				if (text_doc["doc_vectors"].type() != bsoncxx::type::k_binary)
-					continue; // Maybe NULL-value
+			// Go through the cursor and calc similarities
+			std::queue<std::thread> workers; // max. 4 concurrent threads
+			size_t counter = 0;
+			for (const auto& doc : cursor) {
+				const int post_id = doc["_id"].get_int32().value;
 
-				parseBinaryToVector<float>(text_doc["doc_vectors"], vec);
-				if (vec.size() != 300)
-					continue; // Some error <=> Do not enter this
-
-				// Add item to index
-				hnswlib::labeltype _id = text_doc["_id"].get_int32().value;
-				current_index->addPoint(vec.data(), _id);
-
-				// Resize AlgorithmInterface
-				++alg_elem_counter;
-				if (alg_elem_counter >= alg_ifcCapacity) {
-					alg_ifcCapacity += 100;
-					static_cast<hnswlib::HierarchicalNSW<float>*>(current_index.get())->resizeIndex(alg_ifcCapacity);
+				// Wait, when (more than) 4 workers are working
+				if (workers.size() >= 4) {
+					// Join and Dequeue Thread
+					workers.front().join();
+					workers.pop();
 				}
+			
+				// Add task
+				workers.push(std::thread(addSimilarImages, post_id));
+				counter += 1;
 			}
 
-			producton_index = current_index;
-			std::cout << "[INFO] Successfully build a new doc-vectors-index for the Image-API with " << alg_elem_counter << " elements." << std::endl;
-		}
-	
-		void search(
-			const std::vector<std::vector<float>>& queries,
-			const int k,
-			std::vector<std::vector<int>>& results
-		) {
-			if (producton_index == nullptr)
-				return; // Not loaded
-
-			for (const auto& q : queries) {
-				// Do kNN Search
-				knn_result_t prio_queue = producton_index->searchKnn(q.data(), k);
-
-				// Get elements from queue and push them to results (reversed <=> best at the last)
-				std::vector<int> r_ids(prio_queue.size());
-				for (int i = prio_queue.size(); i > 0 ; --i) {
-					r_ids[i - 1] = prio_queue.top().second;
-					prio_queue.pop();
-				}
-
-				results.push_back(r_ids);
+			// Wait for rest of workers
+			while (workers.size()) {
+				workers.front().join();
+				workers.pop();
 			}
+
+			std::cout << "[INFO] Calced similarites for " << counter << " images" << std::endl;
 		}
 	}
 
 	void runBuildAgent() {
-		std::thread searchTask([]() {
+		// Wait pre-delay (API is up and responding 307-Code to other instances)
+		if (GLOBAL::PRE_DELAY > 0) {
+			std::cout << "[INFO] Waiting " << GLOBAL::PRE_DELAY << "s before starting..." << std::endl;
+			std::this_thread::sleep_for(std::chrono::seconds(GLOBAL::PRE_DELAY));
+		}
+
+		std::atomic<bool> indexes_ready(false);
+		std::thread searchTask([&indexes_ready]() {
 			// Build and Wait 3 Hours 5 Min
 			while (1) {
-				TextSearch::buildIndex();
 				ImgSearch::buildIndex();
+				indexes_ready = true;
 
-				// Wait 5 Min
-				std::this_thread::sleep_for(std::chrono::minutes(5));
+				// Wait 10 Min
+				std::this_thread::sleep_for(std::chrono::minutes(10));
 			}
 		});
 
-		std::thread similarTask([]() {
-			// Wait 2 Hours and then calc similarities
+		std::thread similarTask([&indexes_ready]() {
+			// Job for the primary node only
+			if (GLOBAL::isPrimary == false) return;
+
+			// Wait for the Image-Index to be ready
+			while (indexes_ready == false)
+				std::this_thread::sleep_for(std::chrono::minutes(1));
+
 			while (1) {
-				std::this_thread::sleep_for(std::chrono::hours(2));
-				ImgSearch::calcSimilarities();
+				// Run every 5 Minutes the Sim-Job for new Images
+				// Do this 36 times (total: 3h) and then run Sim-Job for all Images
+				for (size_t i = 0; i < 36; ++i) {
+					ImgSearch::calcNewImgsSimilartities();
+					std::this_thread::sleep_for(std::chrono::minutes(5));
+				}
+
+				ImgSearch::calcAllSimilarities();
 			}
 		});
+
+		// Check when the Server is ready
+		{
+			while (!indexes_ready)
+				std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+			// Indexes all build
+			GLOBAL::SERVER_IS_READY = true;
+		}
 
 		searchTask.join();
 		similarTask.join();

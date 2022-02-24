@@ -206,29 +206,43 @@ namespace NswAPI {
 
 		// Threads for Index Builds and sub-methods
 		//	* Post Category Index
-		std::thread category_indexer_task([]() {
+		std::atomic<bool> category_index_ready(false);
+		std::thread category_indexer_task([&category_index_ready]() {
 			// Build Index and wait 15 Minutes to rebuild it
-			bool start_up = true;
 
 			while (1) {
-				Categories::buildIndexes(start_up); // Do all in_parralel to increase startup speed
-				std::this_thread::sleep_for(std::chrono::minutes(15));
+				Categories::buildIndexes(!category_index_ready); // Do all in_parralel to increase startup speed
+				category_index_ready = true;
 
-				start_up = false;
+				std::this_thread::sleep_for(std::chrono::minutes(15)); 
 			}
 		}); 
 
 		//	* Account Interests Index
-		std::thread account_indexer_task([]() {
+		std::atomic<bool> account_index_ready(false);
+		std::thread account_indexer_task([&account_index_ready]() {
 			// Build Index, then wait one Hour and finally rebuild ALL profiles (long and intense calculation), that 
 			// is why we first wait and then do it because on startup we need performance for other ressources...
 
 			while (1) {
 				Accounts::buildIndex();
+				account_index_ready = true;
+
 				std::this_thread::sleep_for(std::chrono::hours(1));
-				Accounts::set_all_account_profiles();
+
+				if(GLOBAL::isPrimary) // Only primary task
+					Accounts::set_all_account_profiles();
 			}		
 		});
+
+		// Check when the Server is ready
+		{
+			while (!category_index_ready || !account_index_ready)
+				std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+			// Indexes all build
+			GLOBAL::SERVER_IS_READY = true;
+		}
 
 		category_indexer_task.join();
 		account_indexer_task.join();
@@ -356,9 +370,21 @@ namespace NswAPI {
 			}
 			
 			// Build all of them
-			for (auto& definition : indexname_target_query)
-				buildOneIndexName(std::get<0>(definition), std::get<1>(definition), std::get<2>(definition));
+			if (in_parralel) {
+				// Build all in parralel (high-intense CPU and Network Operation
+				std::vector<std::thread> workers;
+				for (auto& definition : indexname_target_query)
+					workers.push_back(std::thread(buildOneIndexName, std::get<0>(definition), std::get<1>(definition), std::get<2>(definition)));
 
+				// Wait for them
+				for (auto& th : workers)
+					th.join();
+			}
+			else {
+				// Build one by one (relax CPU and Network)
+				for (auto& definition : indexname_target_query)
+					buildOneIndexName(std::get<0>(definition), std::get<1>(definition), std::get<2>(definition));
+			}
 		}
 
 		void getSimilarPostsByDocVector(
@@ -523,7 +549,6 @@ namespace NswAPI {
 				std::shared_ptr<mongocxx::bulk_write> bulk = std::make_shared<mongocxx::bulk_write>(
 					collection.create_bulk_write(bulkWriteOption)
 				);
-
 
 				for (auto& result_pair : account_results) {
 					// Convert map to object and add bulk-update-model

@@ -25,20 +25,9 @@ namespace ImageAPI {
 		);
 
 		void addSimilarImages(const int img_id);
-		void calcSimilarities();
+		void calcAllSimilarities();
+		void calcNewImgsSimilartities();
 	}	
-
-	namespace TextSearch {
-		extern index_t producton_index;
-
-		void buildIndex();	
-
-		void search(
-			const std::vector<std::vector<float>>& queries,
-			const int k,
-			std::vector<std::vector<int>>& results
-		);
-	}
 
 	void runBuildAgent();
 }
