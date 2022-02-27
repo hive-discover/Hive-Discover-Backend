@@ -1,14 +1,13 @@
 import time
 import sys, os
 sys.path.append(os.getcwd() + "/.")
-import requests
 
 from pymongo import UpdateOne
 
 from database import MongoDB
 from helper import helper, Lemmatizer
 from network import LangDetector
-from config import LANG_DETECTOR_HEARTBEAT_URL
+from config import *
 
 # load both models
 lang_detector, lmtz = (LangDetector(load_model=True), Lemmatizer())
@@ -71,18 +70,16 @@ def run() -> None:
         counter, start_time = 0, time.time()
         counter += get_for_nativeposts()
         counter += get_for_stockcomments()
-        payload = {'msg': 'OK', 'ping' : (time.time() - start_time) * 1000}
-        
-        if counter == 0:
-            # We had nothing to do ==> wait longer
-            time.sleep(10)
-        else:
-            # Wait shorter time, because there were work and maybe there is even more        
-            print(f"[INFO] {counter} posts updated in {payload['ping']}ms")
-            time.sleep(1)        
 
-        # Send heartbeat, can fail and the code will just run again
-        requests.get(LANG_DETECTOR_HEARTBEAT_URL, params=payload)       
+        # Send heartbeat
+        elapsed_time = (time.time() - start_time) * 1000
+        payload = {'msg': 'OK', 'ping' : elapsed_time}        
+        do_heartbeat("LANG_DETECTOR", params=payload)    
+
+        if counter == 0:
+            time.sleep(10)   
+        else:
+            print(f"[INFO] Detected langs for {counter} posts in {elapsed_time}ms")   
 
 
 

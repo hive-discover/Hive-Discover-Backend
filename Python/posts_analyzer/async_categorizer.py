@@ -1,5 +1,4 @@
 import asyncio, time
-import requests
 import sys, os
 sys.path.append(os.getcwd() + "/.")
 
@@ -184,8 +183,8 @@ async def run(BATCH_SIZE : int = 25) -> None:
             
         # Send heartbeat
         elapsed_time = (time.time() - start_time) * 1000
-        print(f"[INFO] {len(tasks)} Tasks ran successfully in {elapsed_time}ms")     
-        requests.get(CATEGORIZER_HEARTBEAT_URL, params={"msg" : "OK", "ping" : elapsed_time})
+        print(f"[INFO] Categorized {len(tasks)} posts in {elapsed_time}ms")     
+        do_heartbeat("CATEGORIZER", params={"msg" : "OK", "ping" : elapsed_time})
 
         # No open_posts? ==> wait
         if len(open_posts_ids) == 0:

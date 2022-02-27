@@ -36,10 +36,21 @@ AMABLE_DB_Port = os.environ.get("AmableDB_Port", 3399)
 
 print(DATABASE_HOST, DATABASE_NAME, DATABASE_USER)
 
-LANG_DETECTOR_HEARTBEAT_URL = os.environ.get("LANG_DETECTOR_HEARTBEAT_URL", None)
-CATEGORIZER_HEARTBEAT_URL = os.environ.get("CATEGORIZER_HEARTBEAT_URL", None)
-VECTORIZER_HEARTBEAT_URL = os.environ.get("VECTORIZER_HEARTBEAT_URL", None)
-SENTIMENTER_HEARTBEAT_URL = os.environ.get("SENTIMENTER_HEARTBEAT_URL", None)
+import requests
+HEARBEAT_URLS = {
+    "LANG_DETECTOR" : os.environ.get("LANG_DETECTOR_HEARTBEAT_URL", None),
+    "CATEGORIZER" : os.environ.get("CATEGORIZER_HEARTBEAT_URL", None),
+    "VECTORIZER" : os.environ.get("VECTORIZER_HEARTBEAT_URL", None),
+    "SENTIMENTER" : os.environ.get("SENTIMENTER_HEARTBEAT_URL", None),
+}
+
+def do_heartbeat(app_name : str, params : dict = {}):
+    try:
+        return requests.get(HEARBEAT_URLS[app_name], params=params)
+    except Exception as e:
+        print(f"[Error] Failed heartbeat for {app_name}")
+        print(e)
+        return None
 
 # Ac-Bot
 AC_BOT_POSTING_WIF = os.environ.get("AC_BOT_POSTING_WIF", None)

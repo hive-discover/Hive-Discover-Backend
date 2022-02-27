@@ -10,12 +10,15 @@ parser.add_argument("-all", "--all", help="start all processes", action="store_t
 parser.add_argument("-ld", "--langdetector", help="start Lang Detector", action="store_true")
 parser.add_argument("-c", "--categorizer", help="start Posts Categorizer", action="store_true")
 parser.add_argument("-b", "--bot", help="start Bot", action="store_true")
+parser.add_argument("-pv", "--posts_vectorizer", help="start Posts Vectorizer", action="store_true")
+parser.add_argument("-sca", "--stock_comment_analyzer", help="start StockImage-Comment Analyzer", action="store_true")
 parser.add_argument("-tm", "--test_modules", help="Test dependencies by importing all modules", action="store_true")
 
 
 #   ***  Available methods:
 #   (lang_detector.start, "Posts Lang Detector Process", True)
 #   (categorizer.start, "Posts Categorizer Process", True)
+#   (post_vectorizer.start, "Posts Vectorizer Process", True)
 #   (bot.start, "Bot Process", True)
 
 
@@ -40,9 +43,15 @@ def main():
    if args.categorizer or args.all:
       from posts_analyzer import async_categorizer
       process_templates.append((async_categorizer.start, "Posts Categorizer Process", True))
+   if args.posts_vectorizer or args.all:
+      from posts_analyzer import post_vectorizer
+      process_templates.append((post_vectorizer.start, "Posts Vectorizer Process", True))
    if args.bot or args.all:
       from bot import ac_bot
       process_templates.append((ac_bot.start, "Bot Process", True))
+   if args.stock_comment_analyzer or args.all:
+      from posts_analyzer import stockcomments_analyzer
+      process_templates.append((stockcomments_analyzer.start, "StockImage-Comment Analyzer Process", True))
 
    # No processes are choosed
    if len(process_templates) == 0:

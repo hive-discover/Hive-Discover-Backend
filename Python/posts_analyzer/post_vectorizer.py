@@ -8,8 +8,6 @@ import time
 import sys, os
 sys.path.append(os.getcwd() + "/.")
 
-import requests
-
 from config import *
 
 FIND_NATIVE_AGG_PIPELINE = [
@@ -243,7 +241,10 @@ async def main() -> None:
         # Do work and send heartbeat
         post_count += await manage_native_posts()
         post_count += await manage_stock_posts()
-        requests.get(VECTORIZER_HEARTBEAT_URL, params={"msg" : "OK", "ping" : (time.time() - start_time) * 1000})
+
+        # Send hearbeat
+        elapsed_time = (time.time() - start_time) * 1000
+        do_heartbeat("VECTORIZER", params={"msg" : "OK", "ping" : elapsed_time})
         
         # wait when nothing were done
         if post_count == 0:
