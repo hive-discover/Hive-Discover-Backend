@@ -1,0 +1,15 @@
+FROM python:3.7-slim
+
+# Install GCC (for Fasttext) and OpenCV with Dependencies
+RUN apt-get update \
+    && apt-get install -y gcc python3-dev build-essential \
+    && apt-get install -y python3-opencv libsm6 libxrender1 libfontconfig1 \
+    && apt-get clean
+
+# Copy Requirements and install them
+WORKDIR /Python
+COPY requirements.txt requirements.txt
+RUN pip3 install -r requirements.txt
+
+# Requirements for modules from requirements.txt
+RUN python3 -m spacy download en_core_web_sm

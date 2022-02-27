@@ -14,4 +14,10 @@ torch==1.9.0
 torchvision
 python-dotenv==0.15.0
 streamlit==0.88.0
-matplotlib
+fasttext==0.9.2
+matplotlib==3.3.4
+opencv-python==4.2.0.34
+scikit-image==0.16.2
+fastapi==0.70.1
+python-multipart==0.0.5
+uvicorn==0.13.3

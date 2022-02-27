@@ -1,14 +1,7 @@
-FROM python:3.7-slim
+FROM registry.hive-discover.tech/python:0.1.2
 
-# Copy Requirements and install them
-WORKDIR /Python
-COPY requirements.txt requirements.txt
-RUN pip3 install -r requirements.txt
-
-# Requirements for modules from requirements.txt
-RUN python3 -m spacy download en_core_web_sm
+RUN python3 -m pip install python-multipart uvicorn
 
 # Copy all project files
 COPY . .
-
 ENTRYPOINT ["python3", "main.py"]
