@@ -8,6 +8,7 @@
 #include "main.h"
 #include <mongocxx/client.hpp>
 #include <nlohmann/json.hpp>
+#include "NswAPI/calc_feed.h"
 #include "NswAPI/index.h"
 #include <set>
 #include "Others/strings.h"
@@ -36,6 +37,7 @@ namespace NswAPI {
 
 			nlohmann::json resBody;
 			resBody["status"] = "ok";
+			resBody["ready"] = GLOBAL::SERVER_IS_READY.load();
 			Helper::writeJSON(response, resBody);
 		}
 
@@ -67,7 +69,7 @@ namespace NswAPI {
 
 					// Get feed
 					std::vector<int> post_results;
-					NswAPI::makeFeed(account_id, abstraction_value, amount, index_name, post_results);
+					NswAPI::getFeed(account_id, abstraction_value, amount, index_name, post_results);
 
 					// Enter feed
 					resBody["status"] = "ok";
@@ -136,15 +138,19 @@ namespace NswAPI {
 
 					}
 					bsoncxx::v_noabi::document::view post_document = maybe_doc->view();
+					if (!post_document["doc_vectors"] || post_document["doc_vectors"].type() != bsoncxx::type::k_document)
+						throw std::runtime_error("Post in post_data has no doc_vectors");; // Something wrong with that document
 
 					// Parse Document-Vectors and find similar ids
 					const int post_id = post_document["_id"].get_int32().value;
 					const bsoncxx::document::view doc_vectors = post_document["doc_vectors"].get_document().value;
 					std::map<std::string, std::vector<int>> similar_result; // lang, similar posts		
 					for (const auto& pair : doc_vectors) {
+						std::string current_lang = pair.key().to_string();
+
 						// Binary to vector
 						std::vector<float> current_vector = {};
-						{
+						try {
 							// Set size and enter all elements
 							const uint8_t* first = pair.get_binary().bytes;
 							const uint32_t b_size = pair.get_binary().size;
@@ -153,7 +159,10 @@ namespace NswAPI {
 							for (size_t i = 0; i < b_size / sizeof(float); ++i)
 								current_vector[i] = *(reinterpret_cast<const float*>(first + i * sizeof(float)));
 						}
-						std::string current_lang = pair.key().to_string();
+						catch (std::exception ex) {
+							std::cout << "[WARNING] One document's doc-vector cannot be parsed. _id: " << post_id << std::endl;
+							continue;
+						}
 
 						// Find similar and enter them. Amount + 1 because maybe the query-doc is inside results and we interpret amount as minimun
 						std::vector<std::vector<int>> results;
@@ -292,11 +301,14 @@ namespace NswAPI {
 							// Parse Permlink 
 							const std::string permlink = doc["permlink"].get_utf8().value.to_string().c_str();
 
+							if (!doc["doc_vectors"] || doc["doc_vectors"].type() != bsoncxx::type::k_document)
+								continue; // Something wrong with that document
+
 							// Parse all doc-vectors for each lang
 							for (const auto& pair : doc["doc_vectors"].get_document().view()) {
 								// Parse Item
 								std::string current_lang = pair.key().to_string();
-								{
+								try {
 									// Set size and enter all elements
 									const uint8_t* first = pair.get_binary().bytes;
 									const uint32_t b_size = pair.get_binary().size;
@@ -304,6 +316,10 @@ namespace NswAPI {
 
 									for (size_t i = 0; i < b_size / sizeof(float); ++i)
 										vector[i] = *(reinterpret_cast<const float*>(first + i * sizeof(float)));
+								}
+								catch (std::exception ex) {
+									std::cout << "[WARNING] One document's doc-vector cannot be parsed. _id: " << doc["_id"].get_int32().value << std::endl;
+									continue;
 								}
 
 								// Is this post the query-source?
@@ -498,8 +514,9 @@ namespace NswAPI {
 								kvp("preserveNullAndEmptyArrays", false)
 							)
 						);
-						agg_pl.match(
+						agg_pl.match(							
 							make_document(
+								// Check that doc_vectors exist
 								kvp("data.doc_vectors", make_document(kvp("$exists", true))),
 								kvp("data.doc_vectors", make_document(kvp("$ne", make_document()))),
 								kvp("data.doc_vectors", make_document(kvp("$ne", NULL)))
@@ -527,18 +544,25 @@ namespace NswAPI {
 						if (current_permlink == s_permlink && current_author == s_author)
 							continue; // Is source post ==> skip
 
+						if (!doc["doc_vectors"] || doc["doc_vectors"].type() != bsoncxx::type::k_document)
+							continue; // Something wrong with that document
+
 						// Go through all post-langs
 						for (const auto& elem : doc["doc_vectors"].get_document().value) {
 							const std::string current_lang = elem.key().to_string();
 
 							// Parse Binary Doc-Vectors to std::vector<float>
-							{
+							try {
 								const uint8_t* first = elem.get_value().get_binary().bytes;
 								const uint32_t b_size = elem.get_value().get_binary().size;
 								v_vector.resize(b_size / sizeof(float));
 
 								for (size_t i = 0; i < b_size / sizeof(float); ++i)
 									v_vector[i] = *(reinterpret_cast<const float*>(first + i * sizeof(float)));
+							}
+							catch(std::exception ex) {
+								std::cout << "[WARNING] One document's doc-vector cannot be parsed. _id: " << doc["_id"].get_int32().value << std::endl;
+								continue;
 							}
 
 							// Calc cosine-simalarity

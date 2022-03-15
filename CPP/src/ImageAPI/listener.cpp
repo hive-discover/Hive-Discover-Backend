@@ -46,6 +46,7 @@ namespace ImageAPI {
 		void defineRoutes() {
 			using namespace Endpoints;
 			server.resource["^/$"]["POST"] = index;
+			server.resource["^/$"]["GET"] = index;
 
 			server.resource["^/similar-searching$"]["POST"] = similar_searching;
 		}
@@ -70,6 +71,7 @@ namespace ImageAPI {
 
 				nlohmann::json resBody;
 				resBody["status"] = "ok";
+				resBody["ready"] = GLOBAL::SERVER_IS_READY.load();
 				Helper::writeJSON(response, resBody);
 			}
 
