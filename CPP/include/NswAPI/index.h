@@ -49,14 +49,6 @@ namespace NswAPI {
 		return ceil(10 / x);
 	}
 
-	void makeFeed(
-		const int account_id,
-		const int abstraction_value,
-		const int amount,
-		const std::string index_name,
-		std::vector<int>& post_results
-	);	
-
 
 	int start();
 
