@@ -41,13 +41,11 @@ namespace NswAPI {
 		void calc_sim_scores(
 			const std::map<std::string, std::vector<std::pair<int, std::vector<float>>>>& similar_doc_vectors,
 			const std::map<std::string, std::vector<std::vector<float>>>& sample_doc_vectors,
-			std::map<float, int>& sim_scores
+			std::vector<std::pair<float, int>>& sim_scores
 		);
 
-		void sample_similar_weighted(
-			const std::map<float, int>& sim_ids,
-			const int amount,
-			std::vector<int>& result
+		void reorder_sim_ids_weighted(
+			std::vector<std::pair<float, int>>& sim_scores
 		);
 	}
 

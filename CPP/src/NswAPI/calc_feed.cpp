@@ -203,7 +203,7 @@ namespace NswAPI {
 		void calc_sim_scores(
 			const std::map<std::string, std::vector<std::pair<int, std::vector<float>>>>& similar_doc_vectors,
 			const std::map<std::string, std::vector<std::vector<float>>>& sample_doc_vectors,
-			std::map<float, int>& sim_scores
+			std::vector<std::pair<float, int>>& sim_scores
 		) {
 			for (const auto& sim_lang : similar_doc_vectors) {
 				// Check if lang occurs in sample
@@ -232,47 +232,28 @@ namespace NswAPI {
 					}
 
 					// Enter total-score in sim_scores 
-					sim_scores[total_sim_score] = sim_pair.first;
+					sim_scores.push_back(std::pair<float, int>(total_sim_score, sim_pair.first));
 				}
 			}
 		}
 
-		void sample_similar_weighted(
-			const std::map<float, int>& sim_ids,
-			const int amount,
-			std::vector<int>& result
+		void reorder_sim_ids_weighted(
+			std::vector<std::pair<float, int>>& sim_scores
 		) {
 			// We do not want to just select the best ones, instead the best ones should just have a higher probability to get choosen and returned
 			// This procedure is called weighted/wheel of fortune/roulette randomness and well described over the net. But instead of a wheel, we use
 			// the exponential distribution to choose random but with weights efficiently. It is described in the following Stack Overflow Comment:
 			// https://stackoverflow.com/a/65207342/7586306
 
-			int smallest_id = 0;
-			float smallest_z = 0, z = 0;
-			float smallest_val = 0;
-
-			while (result.size() < amount && result.size() < sim_ids.size()) {
-				// Init 0-value
-				smallest_id = 0;
-				smallest_z = INT_MAX;
-
-				for (const auto& sim_pair : sim_ids) {
-					z = -(log(1 - static_cast <float> (rand()) / static_cast <float> (RAND_MAX))) / (sim_pair.first / 1000);
-					if (z < smallest_z) {
-						smallest_id = sim_pair.second;
-						smallest_val = sim_pair.first;
-						smallest_z = z;
-					}
-				}
-
-				// Insert in result
-				result.push_back(smallest_id);
-				// Removing this item from the sim-map would make theoretically sense, but 
-				// practically it is rare that this item comes again so we can ignore this case and save some calculations.
-				// The same goals for checking if this item is already in result
+			// Calc z for each similar-score
+			for (auto it = sim_scores.begin(); it != sim_scores.end(); ++it) {
+				const float z = -(log(1 - static_cast <float> (rand()) / static_cast <float> (RAND_MAX))) / (it->first / 1000);
+				*it = std::make_pair(z, it->second);
 			}
-		}
 
+			// Sort: lowest score to index-0
+			std::sort(sim_scores.begin(), sim_scores.end());
+		}
 	}
 
 	void getFeed(
@@ -306,11 +287,18 @@ namespace NswAPI {
 		calcFeed::get_docvectors(setToBsonArray<int>(similar_ids), similar_doc_vectors);
 
 		// Calc cosine sim-scores
-		std::map<float, int> sim_scores; // total sim-score, similar post-id
+		std::vector<std::pair<float, int>> sim_scores; // total sim-score, similar post-id
 		calcFeed::calc_sim_scores(similar_doc_vectors, sample, sim_scores);
-	
-		// Get random ones (but weighted by their sim-score)
-		calcFeed::sample_similar_weighted(sim_scores, amount, post_results);
+
+		// Reorder weighted by their total sim-score
+		calcFeed::reorder_sim_ids_weighted(sim_scores);
+
+		// Select best ones to return (index 0 ==> lowest score ==> best)
+		for (auto it = sim_scores.begin(); it != sim_scores.end(), post_results.size() < amount; ++it)
+			post_results.push_back(it->second);
+
+		// Theoretically we should check for dup-values in post_results but it is really rare that two same ids came after each other
+		// So, practically we can ignore this case when the amount is 100 (normally is)
 	}
 
 }
