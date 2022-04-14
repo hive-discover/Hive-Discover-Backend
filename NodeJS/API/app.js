@@ -57,46 +57,9 @@ app.get('/stats', async (req, res) => {
 });
 
 
-// Clustering
-const cluster = require('cluster');
-const os = require('os');
+//  Start server...
+logging.writeData(logging.app_names.general_api, {"msg" : "Starting API Server Process", "info" : {"pid" : process.pid}});
 
-const worker_count = Math.min(os.cpus().length, process.env.ANALYZER_WORKERS);
-
-if(cluster.isMaster) {
-  logging.writeData(logging.app_names.general_api, {"msg" : "Starting API Server Master-Process", "info" : {"pid" : process.pid, "worker_count" : worker_count}});
-  console.log(`Taking advantage of ${worker_count} Worker`)
-
-  // Fork
-  for (let i = 0; i < worker_count; i++)
-    cluster.fork()
-
-  console.dir(cluster.workers, {depth: 0});
-
-  // Set restart event
-  cluster.on('exit', (worker, code) => {
-    // Good exit code is 0 :))
-    // exitedAfterDisconnect ensures that it is not killed by master cluster or manually
-    // if we kill it via .kill or .disconnect it will be set to true
-    // \x1b[XXm represents a color, and [0m represent the end of this 
-    //color in the console ( 0m sets it to white again )
-    if (code !== 0 && !worker.exitedAfterDisconnect) {
-        logging.writeData(logging.app_names.general_api, {"msg" : "Sub-Process just crashed", "info" : {"pid" : worker.process.pid, "code" : code}}, 1);
-        console.log(`\x1b[34mWorker ${worker.process.pid} crashed.\nStarting a new worker...\n\x1b[0m`);
-        const nw = cluster.fork();
-        console.log(`\x1b[32mWorker ${nw.process.pid} will replace him \x1b[0m`);
-    }
-  });
-
-  console.log(`Master PID: ${process.pid}`)
-} else {   
-  //  Start server...
-  logging.writeData(logging.app_names.general_api, {"msg" : "Starting API Server Sub-Process", "info" : {"pid" : process.pid}});
-
-  app.listen(port, () => {
-    console.log(`App listening at http://localhost:${port}`)
-  });
-}
-
-
-
+app.listen(port, () => {
+  console.log(`App listening at http://localhost:${port}`)
+});

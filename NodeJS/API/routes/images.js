@@ -2,8 +2,9 @@ const mongodb = require('../../database.js')
 const stats = require('./../stats.js')
 const config = require("./../../config");
 const logging = require('./../../logging.js')
+const managed_request = require('./../../req_manager.js')
 
-const request = require('request');
+const crypto = require('crypto');
 const queryParser = require('express-query-int');
 const bodyParser = require('body-parser')
 const express = require('express'),
@@ -186,72 +187,6 @@ router.post('/text', async (req, res) => {
     const ids = search_result.map(post => post._id);
     config.redisClient.set(redis_key_name, JSON.stringify(ids), 'EX', 300);
   }
-
-  return;
-  // Prepare Query and Request
-  const request_options = {
-    'method': 'POST',
-    'url': 'http://api.hive-discover.tech:' + process.env.Image_API_Port + '/text-searching',
-    'headers': {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({query : text_query, amount : amount})
-  };
-  
-  new Promise((resolve, reject) => {
-    // Check cached elements
-    config.redisClient.get(redis_key_name, async (error, reply) => {
-      // [Errors from Redis are not relevant here ==> just send the Request]
-      if(reply){
-        // We got a cached result
-        resolve(JSON.parse(reply));
-        return;
-      }
-
-      // Send query to NswAPI, retrieve response and cache it
-      request(request_options, (error, response) => {
-        // Response-Parsing
-        if (error) reject(error);
-        let body = JSON.parse(response.body);
-        if(body.status !== "ok" || !body.results) reject(body.error);
-
-        // It was scuccessful
-        index_name = body.index_name
-        resolve(body.results);
-
-        // Cache posts with TTL setting (5 Minutes) [Errors are not relevant here]
-        config.redisClient.set(redis_key_name, JSON.stringify(body.results), (err, reply) => {if (err) console.error(err);});
-        config.redisClient.expire(redis_key_name, 60*5);
-      });
-    });
-  }).then(async (posts) =>{
-    // Check if full_data, else get only authorperm
-    let cursor = null;
-    if(full_data)
-      cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {}, "images")
-    else
-      cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {projection : {author : 1, permlink : 1}}, "images")
-
-    for await(const post of cursor) {
-      // Set on correct index
-      posts.forEach((elem, index) => {
-        if(elem === post._id){
-          posts[index] = post
-        }
-      });
-    }   
-    
-    // Remove errors (when the elem is an _id (a number)) and return
-    posts = posts.filter(elem => !Number.isInteger(elem));
-    return posts; 
-  }).then(async (posts) =>{
-    // Send response
-    const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
-    res.send({status : "ok", posts : posts, total : await countposts_text, time : elapsedSeconds});
-  }).catch(err => {
-    console.error("Error in images.js/text: " + err);
-    res.send({status : "failed", err : err, code : 0}).end()
-  })
 });
 
 router.post('/similar', async (req, res) => {
@@ -261,7 +196,7 @@ router.post('/similar', async (req, res) => {
     // Get Search input
     const img_desc = req.body.img_desc, full_data = req.body.full_data;
     const amount = Math.min(parseInt(req.body.amount || 100), 1000);
-    const redis_key_name = "search-similar-image-" + img_desc + "-" + amount;
+    const redis_key_name = "search-similar-img-" + crypto.createHash("sha256").update(img_desc).digest("base64"); + "-" + amount;
 
     if(!img_desc) {
         res.send({status : "failed", err : "Query is null", code : 1}).end()
@@ -275,69 +210,73 @@ router.post('/similar', async (req, res) => {
     let countposts_text = mongodb.countDocumentsInCollection("post_info", {}, "images");
 
     // Prepare Query and Request
-    const request_options = {
+    const req_options = {
       'method': 'POST',
-      'url': 'http://api.hive-discover.tech:' + process.env.Image_API_Port + '/similar-searching',
+      'url': 'https://sim-image-api.hive-discover.tech/similar-searching',
       'headers': {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({query : img_desc, amount : amount})
     };
     
-    new Promise((resolve, reject) => {
-      // Check cached elements
-      config.redisClient.get(redis_key_name, async (error, reply) => {
-        // [Errors from Redis are not relevant here ==> just send the Request]
-        if(reply){
-          // We got a cached result
-          resolve(JSON.parse(reply));
-          return;
-        }
+    try{
+      new Promise((resolve, reject) => {
+        // Check cached elements
+        config.redisClient.get(redis_key_name, async (reply) => {
+          // [Errors from Redis are not relevant here ==> just send the Request]
+          if(reply){
+            // We got a cached result
+            resolve(JSON.parse(reply));
+            return;
+          }
 
-        // Send query to NswAPI, retrieve response and cache it
-        request(request_options, (error, response) => {
-          // Response-Parsing
-          if (error) reject(error);
-          let body = JSON.parse(response.body);
-          if(body.status !== "ok" || !body.results) reject(body.error);
+          // Send query to NswAPI, retrieve response and cache it
+          let {error, response, body} = await managed_request(req_options, [200]);
+          if (error) throw error;
+          
+          // Parse Response Body
+          body = JSON.parse(body);
+          if(body.status !== "ok" || !body.results) throw (body.error || "Something failed");    
 
-          // It was scuccessful
-          index_name = body.index_name
+          // Resolve body posts and cache them
+          body.results = body.results.map(item => {return parseInt(item, 10)}) 
+          if(body.results.length > amount) // Maybe it is to long
+            body.results = body.results.slice(0, amount);
           resolve(body.results);
 
           // Cache posts with TTL setting (5 Minutes) [Errors are not relevant here]
           config.redisClient.set(redis_key_name, JSON.stringify(body.results), (err, reply) => {if (err) console.error(err);});
           config.redisClient.expire(redis_key_name, 60*5);
         });
-      });
-    }).then(async (posts) =>{
-      // Check if full_data, else get only authorperm
-      let cursor = null;
-      if(full_data)
-        cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {}, "images")
-      else
-        cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {projection : {author : 1, permlink : 1}}, "images")
+      }).then(async (posts) =>{
+        // Check if full_data, else get only authorperm
+        let cursor = null;
+        if(full_data)
+          cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {}, "images")
+        else
+          cursor = await mongodb.findManyInCollection("post_info", {_id : {$in : posts}}, {projection : {author : 1, permlink : 1}}, "images")
 
-      for await(const post of cursor) {
-        // Set on correct index
-        posts.forEach((elem, index) => {
-          if(elem === post._id){
-            posts[index] = post
-          }
-        });
-      }   
-      
-      // Remove errors (when the elem is an _id (a number)) and return
-      posts = posts.filter(elem => !Number.isInteger(elem));
-      return posts; 
-    }).then(async (posts) =>{
-      // Send response
-      const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
-      res.send({status : "ok", posts : posts, total : await countposts_text, time : elapsedSeconds});
-    }).catch(err => {
+        for await(const post of cursor) {
+          // Set on correct index
+          posts.forEach((elem, index) => {
+            if(elem === post._id){
+              posts[index] = post
+            }
+          });
+        }   
+        
+        // Remove errors (when the elem is an _id (a number)) and return
+        posts = posts.filter(elem => !Number.isInteger(elem));
+        return posts; 
+      }).then(async (posts) =>{
+        // Send response
+        const elapsedSeconds = parseHrtimeToSeconds(process.hrtime(startTime));
+        res.send({status : "ok", posts : posts, total : await countposts_text, time : elapsedSeconds});
+      });
+    }catch(err) {
       console.error("Error in images.js/similar: " + err);
       res.send({status : "failed", err : err, code : 0}).end()
-  })
+    }
 });
 
 router.get('/similar-url', async (req, res) => {

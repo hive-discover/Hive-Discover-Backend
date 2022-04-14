@@ -21,6 +21,31 @@ redisClient.on("reconnecting", (delay) => {
     console.log("Reconnecting to RedisDB. Delay=", delay);
 });
 
+// OpenSearch Connection Client
+const opensearch = require('@opensearch-project/opensearch')
+var osClient = new opensearch.Client({
+    node: 'https://' + process.env.OPENSEARCH_AUTH + '@' + process.env.OPENSEARCH_HOST + ':' + process.env.OPENSEARCH_PORT,
+    ssl: {
+        //ca: fs.readFileSync(ca_certs_path),
+        // You can turn off certificate verification (rejectUnauthorized: false) if you're using self-signed certificates with a hostname mismatch.
+        // cert: fs.readFileSync(client_cert_path),
+        // key: fs.readFileSync(client_key_path)
+    }
+})
+
+//  * Test Connection
+new Promise(async(resolve) => {
+    const result = await osClient.count({
+        index : "hive-post-data",
+        body : {
+            'query': {
+                'match_all': {}
+            }   
+        }
+    });
+    resolve(result);
+}).then(result => {console.log("Connected successfully to OpenSearch");}).catch(error => {console.error("Error while conencting to OpenSearch: ", error);});
+
 
 const CATEGORIES = [
     ['politic', 'politics', 'election'], ['technology', 'tech', 'technical', 'blockchain'], ['art', 'painting', 'drawing', 'sketch'], ['animal', 'pet'], ['music'],
@@ -52,7 +77,7 @@ const HIVE_NODES = [
 ]
 
 const BANNED_WORDS = [
-    "nsfw", "cross-post", "stop_discover", "sex", "porn", "xxxwoman"
+    "nsfw", "cross-post", "stop_discover", "porn", "xxxwoman"
 ]
 
 function getRandomNode(){
@@ -111,4 +136,4 @@ function slugifyText(text) {
 }
 
 
-module.exports = { redisClient, CATEGORIES, HIVE_NODES, BANNED_WORDS, getRandomNode, getTodayTimestamp, slugifyText };
+module.exports = { redisClient, osClient, CATEGORIES, HIVE_NODES, BANNED_WORDS, getRandomNode, getTodayTimestamp, slugifyText };
