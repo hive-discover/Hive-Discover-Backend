@@ -13,6 +13,7 @@ class MongoDBAsync:
             self.post_info = self.mongo_client[DATABASE_NAME].post_info
             self.post_data = self.mongo_client[DATABASE_NAME].post_data
             self.post_text = self.mongo_client[DATABASE_NAME].post_text
+            self.post_replies = self.mongo_client[DATABASE_NAME].post_replies
         if account_table:
             self.account_table = self.mongo_client[DATABASE_NAME].accounts # Old
             self.account_info = self.mongo_client[DATABASE_NAME].account_info
@@ -31,6 +32,7 @@ class MongoDBAsync:
             MongoDBAsync.post_info = MongoDBAsync.mongo_client[DATABASE_NAME].post_info
             MongoDBAsync.post_data = MongoDBAsync.mongo_client[DATABASE_NAME].post_data
             MongoDBAsync.post_text = MongoDBAsync.mongo_client[DATABASE_NAME].post_text
+            MongoDBAsync.post_replies = MongoDBAsync.mongo_client[DATABASE_NAME].post_replies
         if account_table:
             MongoDBAsync.account_table = MongoDBAsync.mongo_client[DATABASE_NAME].accounts
             MongoDBAsync.account_info = MongoDBAsync.mongo_client[DATABASE_NAME].account_info
@@ -42,7 +44,7 @@ class MongoDBAsync:
 
     
 class MongoDB:
-    def __init__(self, post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False) -> None:
+    def __init__(self, post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False, post_replies : bool = False) -> None:
         self.mongo_client = pymongo.MongoClient(MONGO_CONNECTION_STR)
 
         if post_table:
@@ -53,6 +55,8 @@ class MongoDB:
             self.stats_table = self.mongo_client[DATABASE_NAME].stats
         if banned_table:
             self.banned_table = self.mongo_client[DATABASE_NAME].banned
+        if post_replies:
+            self.post_replies = self.mongo_client[DATABASE_NAME].post_replies
 
     @staticmethod
     def init_global(post_table : bool = False, account_table : bool = False, banned_table : bool = False, stats_table : bool = False) -> None:
@@ -62,6 +66,7 @@ class MongoDB:
             MongoDB.post_info = MongoDB.mongo_client[DATABASE_NAME].post_info
             MongoDB.post_data = MongoDB.mongo_client[DATABASE_NAME].post_data
             MongoDB.post_text = MongoDB.mongo_client[DATABASE_NAME].post_text
+            MongoDB.post_replies = MongoDB.mongo_client[DATABASE_NAME].post_replies
         if account_table:
             MongoDB.account_table = MongoDB.mongo_client[DATABASE_NAME].accounts
             MongoDB.account_info = MongoDB.mongo_client[DATABASE_NAME].account_info
@@ -70,3 +75,4 @@ class MongoDB:
             MongoDB.stats_table = MongoDB.mongo_client[DATABASE_NAME].stats
         if banned_table:
             MongoDB.banned_table = MongoDB.mongo_client[DATABASE_NAME].banned
+            

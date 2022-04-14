@@ -23,8 +23,10 @@ class statics:
     Unknown_Tokens : list = []
     Bulk_PostData_Updates : list = []
     Bulk_PostText_Updates : list = []
+    Os_PostData_Update : list = []
 
 
+os_client = get_opensearch_client()
         
 # Inits  
 def load_models() -> None:
@@ -108,7 +110,7 @@ async def process_one_post(post : dict) -> None:
         fakenews_prob = _output.data[0].tolist()[0] # fakenews = [1, 0] | realnews = [0, 1]
 
 
-    # post_data Update
+    # post_data Update for Mongo
     statics.Bulk_PostData_Updates.append(
         UpdateOne({"_id" : post["_id"]}, {"$set" : {
             "categories" : categories, 
@@ -118,6 +120,12 @@ async def process_one_post(post : dict) -> None:
             }
         })
     )
+
+    # post_text Update for OpenSearch
+    statics.Os_PostData_Update += [
+        {"update" : {"_index" : "hive-post-data", "_id" : post["_id"]}}, # Metadata
+        {"doc" : {"categories" : categories}}
+    ]
 
 
 async def run(BATCH_SIZE : int = 25) -> None:
@@ -178,12 +186,20 @@ async def run(BATCH_SIZE : int = 25) -> None:
                 print(ex)
             statics.Bulk_PostText_Updates = []
 
+        async def doOpenSearchUpdate():
+            if len(statics.Os_PostData_Update) == 0:
+                return
+
+            os_client.bulk(body=statics.Os_PostData_Update, index="hive-post-data")
+            statics.Os_PostData_Update = []
+
         # Do all updates
-        await asyncio.wait([doPostDataUpdate(), doPostTextUpdate()])
+        await asyncio.wait([doPostDataUpdate(), doPostTextUpdate(), doOpenSearchUpdate()])
             
         # Send heartbeat
         elapsed_time = (time.time() - start_time) * 1000
-        print(f"[INFO] Categorized {len(tasks)} posts in {elapsed_time}ms")     
+        if len(tasks) > 0:
+            print(f"[INFO] Categorized {len(tasks)} posts in {elapsed_time}ms")     
         do_heartbeat("CATEGORIZER", params={"msg" : "OK", "ping" : elapsed_time})
 
         # No open_posts? ==> wait

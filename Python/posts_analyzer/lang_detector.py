@@ -12,6 +12,7 @@ from config import *
 # load both models
 lang_detector, lmtz = (LangDetector(load_model=True), Lemmatizer())
 
+os_client = get_opensearch_client()
 
 def detect_lang(post : dict, lang_detector : LangDetector, lmtz : Lemmatizer) -> list:
     '''Detect langs and return it'''
@@ -35,16 +36,23 @@ def get_for_nativeposts() -> int:
     posts = [p for p in MongoDB.post_data.find({"$or" : [{"lang" : None}, {"lang" : {"$exists" : False}}]}, projection={"_id" :1}).limit(100)]
     
     # Get Text and Lang for each _id
-    bulk_updates = []
+    mongo_bulk_updates = []
+    opensearch_bulk_updates = []
     for current_post in MongoDB.post_text.find({"_id" : {"$in" : [p["_id"] for p in posts]}}):
         lang = detect_lang(current_post, lang_detector, lmtz)
-        bulk_updates.append(UpdateOne({"_id" : current_post["_id"]}, {"$set" : {"lang" : lang}}))
+        mongo_bulk_updates.append(UpdateOne({"_id" : current_post["_id"]}, {"$set" : {"lang" : lang}}))
+
+        opensearch_bulk_updates.append({ "update" : { "_index": "hive-post-data", "_id" : current_post["_id"] }})
+        opensearch_bulk_updates.append({ "doc" : { "language" : lang }})
+
 
     # Do changes
-    if len(bulk_updates) > 0:
-        MongoDB.post_data.bulk_write(bulk_updates, ordered=False)
+    if len(mongo_bulk_updates) > 0:
+        MongoDB.post_data.bulk_write(mongo_bulk_updates, ordered=False)
+    if len(opensearch_bulk_updates) > 0:
+        os_client.bulk(body=opensearch_bulk_updates, index="hive-post-data")
 
-    return len(bulk_updates)
+    return len(mongo_bulk_updates)
 
 def get_for_stockcomments():
     bulk_updates = []
@@ -60,6 +68,18 @@ def get_for_stockcomments():
 
     return len(bulk_updates)
 
+def get_for_replies() -> int:   
+    # Get Text
+    bulk_updates = []
+    for current_post in MongoDB.post_replies.find({"$or" : [{"lang" : None}, {"lang" : {"$exists" : False}}]}).limit(100):
+        lang = detect_lang(current_post, lang_detector, lmtz)
+        bulk_updates.append(UpdateOne({"_id" : current_post["_id"]}, {"$set" : {"lang" : lang}}))
+
+    # Do changes
+    if len(bulk_updates) > 0:
+        MongoDB.post_replies.bulk_write(bulk_updates, ordered=False)
+
+    return len(bulk_updates)
 
 def run() -> None:
     '''Main Function: Runs endless to detect all langs'''
@@ -70,6 +90,7 @@ def run() -> None:
         counter, start_time = 0, time.time()
         counter += get_for_nativeposts()
         counter += get_for_stockcomments()
+        counter += get_for_replies()
 
         # Send heartbeat
         elapsed_time = (time.time() - start_time) * 1000

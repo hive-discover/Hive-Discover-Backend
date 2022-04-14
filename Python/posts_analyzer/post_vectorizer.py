@@ -17,7 +17,7 @@ FIND_NATIVE_AGG_PIPELINE = [
             "$or" : [
                 {"doc_vectors" : {"$exists" : False}},
                 {"doc_vectors" : None},
-                {"doc_vectors" : {}},
+                {"doc_vectors" : {}, "lang_proceeded" : {"$ne" : True}},
                 {"re_vectorize" : True}
             ]
         }
@@ -45,6 +45,8 @@ FIND_STOCK_AGG_PIPELINE = [
 ]
 
 mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_CONNECTION_STR)
+os_client = get_opensearch_client()
+
 
 def preprocess_text(text : str) -> str:
     text = text.replace(".", " . ").replace(",", " , ").replace("\n", " \n ")
@@ -159,22 +161,29 @@ async def calc_tf_idf_scores(post_id : int, image_api=False) -> dict:
 
     return lang_weighted_vectors
 
-async def process_one_native_post(post_id: int) -> UpdateOne:    
+async def process_one_native_post(post_id: int) -> tuple:    
     lang_weighted_vectors = await calc_tf_idf_scores(post_id, image_api=False)   
+
+    os_update = [
+        {"update" : {"_index" : "hive-post-data", "_id" : post_id}}, # metadata
+        {"doc" : {"doc_vector" : dict(lang_weighted_vectors)}} # Document
+    ]
 
     # Get binary from np.array
     for lang in lang_weighted_vectors.keys():
         lang_weighted_vectors[lang] = lang_weighted_vectors[lang].tobytes()
 
-    update = {
+    mongo_update = UpdateOne({"_id" : post_id}, update = {
         "$set" : {
-            "doc_vectors" : lang_weighted_vectors
+            "doc_vectors" : lang_weighted_vectors,
+            "lang_proceeded" : True
         },
         "$unset" : {
             "re_vectorize" : ""
         }
-    }
-    return UpdateOne({"_id" : post_id}, update)
+    })
+
+    return (mongo_update, os_update)
 
 async def process_one_stock_post(post_id: int) -> UpdateOne:    
     lang_weighted_vectors = await calc_tf_idf_scores(post_id, image_api=True)   
@@ -205,15 +214,24 @@ async def manage_native_posts() -> None:
     if len(tasks) == 0:
         return 0
 
-    # Update posts
-    bulk_update = await asyncio.gather(*tasks)
-    bulk_update = [x for x in bulk_update if x] # Remove None's
+    bulks = await asyncio.gather(*tasks)
+
+    # Update posts in MongoDB
+    bulk_update = [x for x,_ in bulks if x] # Remove None's and filter
     if len(bulk_update) > 0:
         await mongo_client["hive-discover"]["post_data"].bulk_write(bulk_update, ordered=False)
 
+    # Update posts in OpenSearch
+    bulk_update = []
+    for _, x in bulks:
+        bulk_update += x
+
+    if len(bulk_update) > 0:
+         os_client.bulk(body=bulk_update, index="hive-post-data")
+
     # Logging
-    print(f"[INFO] Vectorized {len(tasks)} native-posts")
-    return len(tasks)
+    print(f"[INFO] Vectorized {len(bulk_update)} native-posts")
+    return len(bulk_update)
 
 async def manage_stock_posts() -> None:
     # Find stock posts where work is needed

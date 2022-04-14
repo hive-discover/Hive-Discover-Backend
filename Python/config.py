@@ -30,6 +30,22 @@ DATABASE_USER = os.environ.get("MongoDB_User", None)
 DATABASE_PASSWORD = os.environ.get("MongoDB_Password", None)
 MONGO_CONNECTION_STR = os.environ.get("MongoDB_Connection_String", None)
 
+from opensearchpy import OpenSearch
+OPENSEARCH_HOST = os.environ.get("OPENSEARCH_HOST", None)
+OPENSEARCH_PORT = int(os.environ.get("OPENSEARCH_PORT", -1))
+OPENSEARCH_AUTH = os.environ.get("OPENSEARCH_AUTH", "user:password").split(":")
+
+def get_opensearch_client() -> OpenSearch:
+    return OpenSearch(
+        hosts = [{'host': OPENSEARCH_HOST, 'port': OPENSEARCH_PORT}],
+        http_compress = True, # enables gzip compression for request bodies
+        http_auth = (OPENSEARCH_AUTH[0], OPENSEARCH_AUTH[1]),
+        use_ssl = True,
+        verify_certs = False,
+        ssl_assert_hostname = False,
+        ssl_show_warn = False
+    )
+
 FEED_API_PORT = int(os.environ.get("NMSLIB_API_Port", -1))
 WORDVEC_API_PORT = os.environ.get("WordVecApi_Port", 7879)
 AMABLE_DB_Port = os.environ.get("AmableDB_Port", 3399)
